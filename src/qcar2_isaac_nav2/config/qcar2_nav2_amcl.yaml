@@ -1,0 +1,470 @@
+# Phase 2 - navigation on a pre-built map (AMCL localization, no SLAM).
+# Used by qcar2_navigation_launch.py.
+#
+# QCar2 geometry measured from the Isaac Sim TF tree:
+#   front axle  base_link -> hub_frontLeft   = ( 0.130,  0.056)
+#   rear axle   base_link -> wheel_rearLeft  = (-0.128,  0.056)
+#   => wheelbase 0.258 m, track 0.112 m, body ~0.39 x 0.19 m
+#   => min turning radius = 0.258 / tan(0.5 rad max steer) ~= 0.47 m
+
+amcl:
+  ros__parameters:
+    use_sim_time: true
+    base_frame_id: "base_link"
+    odom_frame_id: "odom"
+    global_frame_id: "map"
+    scan_topic: scan
+    robot_model_type: "nav2_amcl::DifferentialMotionModel"
+
+    # An Ackermann car never turns in place, so rotation noise stays low
+    # while translation-induced rotation error (alpha2) matters more.
+    alpha1: 0.1     # rotation noise from rotation
+    alpha2: 0.2     # rotation noise from translation
+    alpha3: 0.2     # translation noise from translation
+    alpha4: 0.1     # translation noise from rotation
+    alpha5: 0.1
+
+    min_particles: 500
+    max_particles: 2000
+    update_min_a: 0.15
+    update_min_d: 0.1
+    resample_interval: 1
+    transform_tolerance: 0.5
+    tf_broadcast: true
+
+    laser_model_type: "likelihood_field"
+    laser_max_range: 8.0
+    laser_min_range: 0.12
+    max_beams: 120
+    sigma_hit: 0.2
+    z_hit: 0.5
+    z_max: 0.05
+    z_rand: 0.5
+    z_short: 0.05
+    lambda_short: 0.1
+    do_beamskip: false
+    pf_err: 0.05
+    pf_z: 0.99
+    recovery_alpha_fast: 0.0
+    recovery_alpha_slow: 0.0
+    save_pose_rate: 0.5
+
+    # Start localized at the map origin so you do NOT have to click
+    # "2D Pose Estimate" every launch. Park the car at the spot where you
+    # started mapping, or click 2D Pose Estimate to correct it.
+    set_initial_pose: true
+    always_reset_initial_pose: false
+    initial_pose:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      yaw: 0.0
+
+map_server:
+  ros__parameters:
+    use_sim_time: true
+    # yaml_filename is injected by the launch file's `map:=` argument
+    yaml_filename: ""
+
+map_saver:
+  ros__parameters:
+    use_sim_time: true
+    save_map_timeout: 5.0
+    free_thresh_default: 0.196
+    occupied_thresh_default: 0.65
+
+bt_navigator:
+  ros__parameters:
+    use_sim_time: true
+    global_frame: map
+    robot_base_frame: base_link
+    odom_topic: /odom
+    # Absolute path is injected by qcar2_navigation_launch.py (RewrittenYaml).
+    # The key must exist here for the rewrite to take effect.
+    default_nav_to_pose_bt_xml: ""
+    default_nav_through_poses_bt_xml: ""
+    bt_loop_duration: 10
+    default_server_timeout: 20
+    transform_tolerance: 0.5
+
+controller_server:
+  ros__parameters:
+    use_sim_time: true
+    enable_stamped_cmd_vel: true   # Jazzy default is false (plain Twist)
+    odom_topic: "odom"
+    odom_frame_id: "odom"
+    base_frame_id: "base_link"
+    controller_frequency: 20.0
+    min_x_velocity_threshold: 0.001
+    min_y_velocity_threshold: 0.5
+    min_theta_velocity_threshold: 0.01
+    failure_tolerance: 0.3
+    progress_checker_plugins: ["progress_checker"]
+    goal_checker_plugins: ["goal_checker"]
+    controller_plugins: ["FollowPath"]
+
+    progress_checker:
+      plugin: "nav2_controller::SimpleProgressChecker"
+      required_movement_radius: 0.10
+      movement_time_allowance: 20.0
+    goal_checker:
+      plugin: "nav2_controller::SimpleGoalChecker"
+      xy_goal_tolerance: 0.25
+      # Effectively "ignore final heading". A car cannot spin to fix its yaw
+      # once it has arrived, so any tight tolerance here makes it loop around
+      # the goal forever trying to line up. The approach heading is already
+      # handled by SmacPlannerHybrid, which plans a Dubins path to the goal
+      # POSE - the car arrives pointing roughly the right way on its own.
+      # Tighten this only if you also allow reversing (REEDS_SHEPP below).
+      yaw_goal_tolerance: 3.15
+      stateful: True
+
+    FollowPath:
+      plugin: "nav2_mppi_controller::MPPIController"
+      time_steps: 56
+      model_dt: 0.05
+      batch_size: 1000        # halved: consider_footprint true costs much more per rollout
+      vx_std: 0.2
+      vy_std: 0.2
+      wz_std: 0.3
+      vx_max: 0.8
+      vx_min: -0.3
+      vy_max: 0.0
+      wz_max: 1.5
+      iteration_count: 1
+      temperature: 0.3
+      gamma: 0.015
+      motion_model: "Ackermann"
+      visualize: true
+      regenerate_noises: true
+      TrajectoryVisualizer:
+        trajectory_step: 5
+        time_step: 3
+      AckermannConstraints:
+        min_turning_r: 0.5     # real limit ~0.47 m, rounded up for margin
+      critics: [
+        "ConstraintCritic", "GoalCritic",
+        "GoalAngleCritic", "PathAlignCritic", "PathFollowCritic",
+        "PathAngleCritic", "PreferForwardCritic", "CostCritic"]
+      ConstraintCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 4.0
+      GoalCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 5.0
+        threshold_to_consider: 1.0
+      GoalAngleCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 3.0
+        threshold_to_consider: 0.5
+      PreferForwardCritic:
+        # Mild preference only. At weight 5.0 this vetoes the reverse segments
+        # that REEDS_SHEPP plans, and the car sits still instead of backing up.
+        enabled: true
+        cost_power: 1
+        cost_weight: 1.5
+        threshold_to_consider: 0.5
+      CostCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 3.81
+        critical_cost: 300.0
+        # The car is 0.40 x 0.20 m. With consider_footprint false MPPI checks a
+        # circle of the costmap's inscribed radius (0.10 m) - it thinks the car
+        # is a quarter of its real length, so it plans through gaps it cannot
+        # clear and then stalls when the costmap disagrees.
+        consider_footprint: true
+        collision_cost: 1000000.0
+        near_goal_distance: 1.0
+        trajectory_point_step: 2
+      PathAlignCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 14.0
+        max_path_occupancy_ratio: 0.05
+        trajectory_point_step: 4
+        threshold_to_consider: 0.5
+        offset_from_furthest: 20
+        # Follow the heading the planner assigned to each pose, so reverse
+        # segments are driven in reverse instead of being turned around.
+        use_path_orientations: true
+      PathFollowCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 5.0
+        offset_from_furthest: 5
+        threshold_to_consider: 1.0
+      PathAngleCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 2.0
+        offset_from_furthest: 4
+        threshold_to_consider: 3.14
+        max_angle_to_furthest: 1.0
+        # 0 = forward preference, 2 = consider feasible path orientations.
+        # Mode 2 is what Nav2 recommends for Ackermann bases that reverse.
+        mode: 2
+
+planner_server:
+  ros__parameters:
+    use_sim_time: true
+    # SmacPlannerHybrid with REEDS_SHEPP runs at ~3-8 Hz on this map. The BT
+    # only replans at 1 Hz, so this is purely about not logging a false alarm.
+    expected_planner_frequency: 5.0
+    planner_plugins: ["GridBased"]
+    GridBased:
+      plugin: "nav2_smac_planner::SmacPlannerHybrid"
+      tolerance: 0.5
+      downsample_costmap: false
+      downsampling_factor: 1
+      allow_unknown: false
+      max_iterations: 1000000
+      max_on_approach_iterations: 1000
+      max_planning_time: 5.0
+      # REEDS_SHEPP lets the planner use reverse, like a real car doing a
+      # 3-point turn. With DUBIN (forward only) a goal 0.8 m behind the car
+      # becomes a 3 m loop, and if the loop does not fit, no plan exists.
+      motion_model_for_search: "REEDS_SHEPP"
+      angle_quantization_bins: 72
+      analytic_expansion_ratio: 3.5
+      analytic_expansion_max_length: 3.0
+      minimum_turning_radius: 0.5
+      reverse_penalty: 2.0
+      change_penalty: 0.0
+      non_straight_penalty: 1.2
+      cost_penalty: 2.0
+      retrospective_penalty: 0.015
+      lookup_table_size: 10.0   # map is ~15 m across; 20 m just costs startup time
+      cache_obstacle_heuristic: false
+      smooth_path: true
+      smoother:
+        max_iterations: 1000
+        w_smooth: 0.3
+        w_data: 0.2
+        tolerance: 1.0e-10
+        do_refinement: true
+        refinement_num: 2
+
+smoother_server:
+  ros__parameters:
+    use_sim_time: true
+    smoother_plugins: ["simple_smoother"]
+    simple_smoother:
+      plugin: "nav2_smoother::SimpleSmoother"
+      tolerance: 1.0e-10
+      max_its: 1000
+      do_refinement: True
+
+behavior_server:
+  ros__parameters:
+    use_sim_time: true
+    enable_stamped_cmd_vel: true
+    local_costmap_topic: local_costmap/costmap_raw
+    global_costmap_topic: global_costmap/costmap_raw
+    local_footprint_topic: local_costmap/published_footprint
+    global_footprint_topic: global_costmap/published_footprint
+    cycle_frequency: 10.0
+    behavior_plugins: ["backup", "drive_on_heading", "wait", "assisted_teleop"]
+    backup:
+      plugin: "nav2_behaviors::BackUp"
+    drive_on_heading:
+      plugin: "nav2_behaviors::DriveOnHeading"
+    wait:
+      plugin: "nav2_behaviors::Wait"
+    assisted_teleop:
+      plugin: "nav2_behaviors::AssistedTeleop"
+    local_frame: odom
+    global_frame: map
+    robot_base_frame: base_link
+    transform_tolerance: 0.5
+    # Spin / rotate-in-place is deliberately NOT in the plugin list:
+    # an Ackermann car physically cannot execute it.
+
+velocity_smoother:
+  ros__parameters:
+    use_sim_time: true
+    enable_stamped_cmd_vel: true
+    smoothing_frequency: 20.0
+    scale_velocities: false
+    feedback: "OPEN_LOOP"
+    max_velocity: [0.8, 0.0, 1.5]
+    min_velocity: [-0.3, 0.0, -1.5]
+    max_accel: [1.5, 0.0, 3.2]
+    max_decel: [-1.5, 0.0, -3.2]
+    odom_topic: "odom"
+    odom_duration: 0.1
+    deadband_velocity: [0.0, 0.0, 0.0]
+    velocity_timeout: 1.0
+
+collision_monitor:
+  ros__parameters:
+    use_sim_time: true
+    enabled: false          # bypassed: the twist bridge taps /cmd_vel_nav directly
+    enable_stamped_cmd_vel: true
+    base_frame_id: "base_link"
+    odom_frame_id: "odom"
+    cmd_vel_in_topic: "cmd_vel_smoothed"
+    cmd_vel_out_topic: "cmd_vel"
+    state_topic: "collision_monitor_state"
+    transform_tolerance: 0.5
+    source_timeout: 5.0
+    base_shift_correction: True
+    stop_pub_timeout: 2.0
+    # A typed, minimal configuration. Empty lists ([]) make the node abort at
+    # startup, so a real polygon/source must be declared even when disabled.
+    polygons: ["PolygonStop"]
+    PolygonStop:
+      type: "circle"
+      radius: 0.25
+      action_type: "stop"
+      min_points: 4
+      visualize: False
+      polygon_pub_topic: "polygon_stop"
+      enabled: False
+    observation_sources: ["scan"]
+    scan:
+      type: "scan"
+      topic: "/scan"
+      enabled: False
+
+docking_server:
+  ros__parameters:
+    use_sim_time: true
+    enable_stamped_cmd_vel: true
+    controller_frequency: 50.0
+    base_frame: "base_link"
+    fixed_frame: "odom"
+    odom_topic: "odom"
+    # Unused by this project, but the docking server aborts on empty lists.
+    dock_plugins: ['dummy_dock']
+    dummy_dock:
+      plugin: 'opennav_docking::SimpleNonChargingDock'
+      docking_threshold: 0.05
+      staging_x_offset: -0.7
+      use_external_detection_pose: false
+      use_battery_status: false
+      use_stall_detection: false
+    docks: ['home_dock']
+    home_dock:
+      type: 'dummy_dock'
+      frame: map
+      pose: [0.0, 0.0, 0.0]
+
+route_server:
+  ros__parameters:
+    use_sim_time: true
+
+waypoint_follower:
+  ros__parameters:
+    use_sim_time: true
+    loop_rate: 20
+    stop_on_failure: false
+    action_server_result_timeout: 900.0
+    waypoint_task_executor_plugin: "wait_at_waypoint"
+    wait_at_waypoint:
+      plugin: "nav2_waypoint_follower::WaitAtWaypoint"
+      enabled: True
+      waypoint_pause_duration: 200
+
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      use_sim_time: true
+      global_frame: map
+      robot_base_frame: base_link
+      update_frequency: 1.0
+      publish_frequency: 1.0
+      resolution: 0.05
+      track_unknown_space: true
+      transform_tolerance: 0.5
+      footprint: "[[0.21, 0.10], [0.21, -0.10], [-0.19, -0.10], [-0.19, 0.10]]"
+      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
+
+      static_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+        map_subscribe_transient_local: true
+
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: true
+        observation_sources: scan
+        scan:
+          topic: /scan
+          data_type: "LaserScan"
+          max_obstacle_height: 2.0
+          obstacle_max_range: 6.0
+          obstacle_min_range: 0.12
+          raytrace_max_range: 8.0
+          raytrace_min_range: 0.12
+          clearing: true
+          marking: true
+
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        # 0.75 m around a 0.19 m wide car makes every indoor gap look lethal.
+        inflation_radius: 0.30
+        cost_scaling_factor: 3.0
+
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      use_sim_time: true
+      # odom, NOT map: the local costmap must not jump when AMCL corrects the pose.
+      global_frame: odom
+      robot_base_frame: base_link
+      update_frequency: 5.0
+      publish_frequency: 2.0
+      rolling_window: true
+      width: 4
+      height: 4
+      resolution: 0.05
+      transform_tolerance: 0.5
+      footprint: "[[0.21, 0.10], [0.21, -0.10], [-0.19, -0.10], [-0.19, 0.10]]"
+      # No static_layer here - live scans only.
+      plugins: ["obstacle_layer", "inflation_layer"]
+
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: true
+        observation_sources: scan depth_scan
+        scan:
+          topic: /scan
+          data_type: "LaserScan"
+          max_obstacle_height: 2.0
+          obstacle_max_range: 4.0
+          obstacle_min_range: 0.12
+          raytrace_max_range: 5.0
+          raytrace_min_range: 0.12
+          clearing: true
+          marking: true
+        # The RealSense depth image, flattened to a LaserScan by
+        # depthimage_to_laserscan (see qcar2_navigation_launch.py). Local costmap
+        # only: the depth FOV is ~58 deg, and letting something that narrow clear
+        # cells in the global costmap erases mapped walls the moment the car turns
+        # away from them.
+        #
+        # Inert until Isaac Sim publishes /realsense_depth - run
+        # scripts/isaac_add_depth_camera.py in the Script Editor to add that
+        # graph. A source that never publishes costs nothing here because
+        # expected_update_rate defaults to 0.0, which means "never stale".
+        depth_scan:
+          topic: /scan_depth
+          data_type: "LaserScan"
+          max_obstacle_height: 2.0
+          # Isaac renders geometrically perfect depth, but keeping the horizon
+          # near the real D435's usable range stops distant thin geometry from
+          # flickering cells in and out.
+          obstacle_max_range: 3.0
+          obstacle_min_range: 0.25
+          raytrace_max_range: 3.5
+          raytrace_min_range: 0.25
+          clearing: true
+          marking: true
+
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        inflation_radius: 0.30
+        cost_scaling_factor: 3.0

@@ -1,0 +1,172 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+    Property Tree Widget:
+      Expanded:
+        - /3D map cloud1
+      Splitter Ratio: 0.5
+    Tree Height: 600
+Visualization Manager:
+  Class: ""
+  Name: root
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid
+      Enabled: true
+      Cell Size: 1
+      Plane Cell Count: 24
+      Color: 160; 160; 164
+      Reference Frame: <Fixed Frame>
+      Alpha: 0.4
+    - Class: rviz_default_plugins/TF
+      Name: TF
+      Enabled: false
+      Show Names: true
+      Show Axes: true
+      Show Arrows: false
+      Marker Scale: 0.3
+      Update Interval: 0
+      Frame Timeout: 15
+      Frames:
+        All Enabled: true
+    # Disabled on purpose. Subscribing to this makes RTAB-Map assemble the
+    # entire 3D map on demand - 6+ GB on this map - and the OOM killer takes
+    # Isaac Sim with it. Look at maps/qcar2_vslam_cloud_cloud.ply instead, or
+    # use qcar2_vslam_mapping_launch.py view_only:=true with Isaac Sim closed.
+    - Class: rviz_default_plugins/PointCloud2
+      Name: 3D map cloud (heavy - see comment)
+      Enabled: false
+      Style: Points
+      Size (Pixels): 2
+      Alpha: 1
+      Decay Time: 0
+      Color Transformer: RGB8
+      Position Transformer: XYZ
+      Queue Size: 5
+      Selectable: false
+      Use Fixed Frame: true
+      Topic:
+        Value: /rtabmap/cloud_map
+        Depth: 5
+        Durability Policy: Volatile
+        Reliability Policy: Reliable
+        History Policy: Keep Last
+    # Off by default: RViz renders this on the same GPU Isaac Sim is using, and
+    # a 19 k-point cloud redrawn every frame costs Isaac frames it needs to
+    # produce the images in the first place. Tick it when you want to see what
+    # the VoxelLayer is being fed.
+    - Class: rviz_default_plugins/PointCloud2
+      Name: Live depth cloud
+      Enabled: false
+      Style: Points
+      Size (Pixels): 2
+      Alpha: 1
+      Decay Time: 0
+      Color Transformer: AxisColor
+      Axis: Z
+      Position Transformer: XYZ
+      Queue Size: 5
+      Selectable: false
+      Use Fixed Frame: true
+      Topic:
+        Value: /camera_cloud
+        Depth: 5
+        Durability Policy: Volatile
+        Reliability Policy: Reliable
+        History Policy: Keep Last
+    - Class: rviz_default_plugins/Map
+      Name: Map (2D projection)
+      Enabled: true
+      Alpha: 0.4
+      Color Scheme: map
+      Draw Behind: true
+      Update Topic:
+        Value: /map_updates
+      Topic:
+        Value: /map
+        Depth: 5
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+        History Policy: Keep Last
+    - Class: rviz_default_plugins/Map
+      Name: Local costmap
+      Enabled: true
+      Alpha: 0.6
+      Color Scheme: costmap
+      Draw Behind: false
+      Update Topic:
+        Value: /local_costmap/costmap_updates
+      Topic:
+        Value: /local_costmap/costmap
+        Depth: 5
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+        History Policy: Keep Last
+    - Class: rviz_default_plugins/Path
+      Name: Path
+      Enabled: true
+      Alpha: 1
+      Color: 0; 255; 0
+      Line Style: Lines
+      Topic:
+        Value: /plan
+        Depth: 5
+        Durability Policy: Volatile
+        Reliability Policy: Reliable
+        History Policy: Keep Last
+    - Class: rviz_default_plugins/Image
+      Name: RGB
+      Enabled: true
+      Normalize Range: true
+      Max Intensity: 4096
+      Min Intensity: 0
+      Topic:
+        Value: /realsense/color/image_raw
+        Depth: 5
+        Durability Policy: Volatile
+        Reliability Policy: Reliable
+        History Policy: Keep Last
+    - Class: rviz_default_plugins/Image
+      Name: Depth (registered)
+      Enabled: true
+      Normalize Range: false
+      Max Intensity: 12
+      Min Intensity: 0
+      Topic:
+        Value: /realsense/depth/image_raw
+        Depth: 5
+        Durability Policy: Volatile
+        Reliability Policy: Reliable
+        History Policy: Keep Last
+  Enabled: true
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: map
+    Frame Rate: 15
+  Tools:
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/FocusCamera
+    - Class: rviz_default_plugins/SetGoal
+      Topic:
+        Value: /goal_pose
+  Value: true
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Name: Current View
+      Distance: 18
+      Focal Point:
+        X: 4
+        Y: 3
+        Z: 0
+      Pitch: 0.8
+      Yaw: 3.9
+      Near Clip Distance: 0.01
+      Target Frame: <Fixed Frame>
+    Saved: ~
+Window Geometry:
+  Height: 900
+  Width: 1600
+  Displays:
+    collapsed: false

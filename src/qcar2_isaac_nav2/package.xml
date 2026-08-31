@@ -1,0 +1,64 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>qcar2_isaac_nav2</name>
+  <version>0.0.0</version>
+  <description>TODO: Package description</description>
+  <maintainer email="joseph.shu@quanser.com">Joseph Shu</maintainer>
+  <license>Apache-2.0</license>
+
+  <depend>rclcpp</depend>
+  <depend>cv_bridge</depend>
+  <depend>image_transport</depend>
+  <depend>libopencv-dev</depend>
+
+  <depend>std_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>control_msgs</depend>
+
+  <!-- Navigation2 dependencies -->
+  <exec_depend>nav2_costmap_2d</exec_depend>
+  <exec_depend>nav2_core</exec_depend>
+  <exec_depend>nav2_navfn_planner</exec_depend>
+  <exec_depend>nav2_bringup</exec_depend>
+  <exec_depend>nav2_amcl</exec_depend>
+  <exec_depend>nav2_map_server</exec_depend>
+  <exec_depend>nav2_smac_planner</exec_depend>
+  <exec_depend>nav2_mppi_controller</exec_depend>
+  <exec_depend>nav2_behaviors</exec_depend>
+  <exec_depend>nav2_bt_navigator</exec_depend>
+  <exec_depend>nav2_common</exec_depend>
+
+  <!-- Additional dependencies -->
+  <exec_depend>ros2launch</exec_depend>
+  <exec_depend>cartographer_ros</exec_depend>
+  <exec_depend>teleop_twist_keyboard</exec_depend>
+  <exec_depend>rviz2</exec_depend>
+  <exec_depend>depthimage_to_laserscan</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
+
+  <!-- RGB-D V-SLAM route (qcar2_vslam_*_launch.py). rtabmap_util supplies
+       point_cloud_xyz, which feeds the costmaps' VoxelLayer; depth_image_proc
+       is not installed on this machine. -->
+  <exec_depend>rtabmap_slam</exec_depend>
+  <exec_depend>rtabmap_util</exec_depend>
+  <exec_depend>rtabmap_viz</exec_depend>
+
+  <!-- YOLO detection on the 360 deg CSI ring (qcar2_yolo_launch.py).
+       ultralytics is NOT declared here: it is a pip package, not a rosdep key.
+       It lives in ~/.local, installed with the pip flags given in README.md
+       (an XML comment cannot contain a double hyphen, so they are not repeated
+       here). cv_bridge is deliberately absent too: it segfaults under this
+       machine's NumPy, see the comment at the top of src/yolo_detector.py. -->
+  <exec_depend>vision_msgs</exec_depend>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
