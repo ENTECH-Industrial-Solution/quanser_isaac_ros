@@ -349,7 +349,7 @@ class LaneFollower(Node):
 
         self.declare_parameter('image_topic', '/csi_front/image_raw')
         self.declare_parameter('cmd_topic', '/cmd_vel_twist')
-        self.declare_parameter('speed', 0.30)
+        self.declare_parameter('speed', 1.00)
         self.declare_parameter('kp', 0.70)
         self.declare_parameter('kd', 0.10)
         # Matches twist_stamped_to_twist.py; Isaac Sim clamps around 0.5 rad.
