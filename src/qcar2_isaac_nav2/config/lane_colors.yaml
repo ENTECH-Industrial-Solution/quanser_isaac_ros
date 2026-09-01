@@ -1,0 +1,24 @@
+# Packaged fallback lane colours.
+#
+# These are STARTING POINTS, not measured values - the lighting in the Isaac
+# scene decides the real ones.  Tune them against the live camera with
+#
+#     ros2 launch qcar2_isaac_nav2 qcar2_lane_follow_launch.py tune:=true
+#
+# which writes ~/.ros/qcar2_lane_colors.yaml.  The launch file prefers that file
+# when it exists, so tuning does NOT require a colcon build - editing this file
+# does, because config/ is installed.
+#
+# HSV is OpenCV's convention: H 0-179, S 0-255, V 0-255.
+# White paint is "any hue, barely saturated, bright"; blue is a hue window.
+/**:
+  ros__parameters:
+    white_hsv_low: [0, 0, 170]
+    white_hsv_high: [179, 60, 255]
+    blue_hsv_low: [95, 90, 60]
+    blue_hsv_high: [130, 255, 255]
+    # Fraction of the image height above which nothing is road.
+    roi_top: 0.55
+    # Look-ahead band, as a fraction of the ROI height measured up from its
+    # bottom edge.  Larger = look further ahead = smoother but later reaction.
+    band_frac: 0.35

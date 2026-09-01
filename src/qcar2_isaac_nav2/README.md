@@ -459,6 +459,120 @@ node แปลงให้เองแล้ว (`half:=true` -> `quantize='fp16
 
 ---
 
+## ขับตามเลนด้วยกล้อง (lane following)
+
+เส้นทางที่ **ไม่ใช้ Nav2 เลย** ไม่มีแมพ ไม่มี costmap ไม่มี goal pose — กล้องหน้าเห็นเส้นเลน
+คำนวณว่าเราเบี่ยงจากกลางเลนเท่าไร แล้วแปลงเป็นมุมเลี้ยวส่งเข้า `/cmd_vel_twist` ตรง ๆ
+
+```
+/csi_front/image_raw ──> lane_follower.py ──> /cmd_vel_twist (Twist, มุมเลี้ยว rad)
+                              │                      │
+                              │                      └──> Isaac Sim QCar2 drive graph
+                              └──> /lane/debug_image  (mask + เส้นที่เจอ + จุดเล็ง)
+```
+
+> **ห้ามรันพร้อม Nav2** เพราะ publish ลง `/cmd_vel_twist` ตัวเดียวกับที่
+> `twist_stamped_to_twist.py` ใช้ — สอง publisher จะแย่งกันสั่งเลี้ยว
+
+ถนนในแมพมี 2 แบบ และใช้ **กฎเดียวกัน** ทั้งคู่ เพราะกฎมองว่า "เส้นที่ใกล้ที่สุดข้างซ้ายกับข้างขวา
+คืออะไร" ไม่ได้มองว่าถนนแบบไหน:
+
+| ถนน | ขอบซ้าย | ขอบขวา | เป้าหมาย |
+|---|---|---|---|
+| 1 เลน ขาว 2 ข้าง | ขาว | ขาว | กึ่งกลางระหว่างสองเส้น |
+| 2 เลน มีเส้นน้ำเงินกลาง | **น้ำเงิน** | ขาว | กึ่งกลางระหว่างสองเส้น |
+| เห็นข้างเดียว | — | — | ห่างจากเส้นนั้นครึ่งความกว้างเลน |
+
+ความกว้างครึ่งเลนไม่ได้เดาเอา — ตอนไหนที่เห็นครบสองข้างจะ**วัดแล้วจำไว้** (EMA)
+พอเส้นหนึ่งหายไปจึงใช้ค่าที่วัดมาจริง ไม่ใช่ค่า default
+
+รถขับ **ชิดขวา (right-hand traffic)** เส้นน้ำเงินกลางถนนจึงต้องอยู่ **ทางซ้าย** ของรถเสมอ
+ถ้าเจอน้ำเงินอยู่ทางขวาโดด ๆ แปลว่าหลุดไปเลนสวน โค้ดจะเล็งไป**อีกฝั่งของเส้นน้ำเงิน**
+เพื่อข้ามกลับ ไม่ใช่จัดกลางเลนสวนต่อไป
+
+### ขั้นที่ 0 — ฝั่ง Isaac Sim (ทำครั้งเดียว ตอน **หยุด** sim)
+
+เปิด render product ของกล้องหน้าตัวเดียวพอ (4 ตัวกิน GPU ฟรีในงานนี้):
+
+```bash
+QCAR2_CAMERA_PRESET=csi_front python3 scripts/isaac_camera_streams.py
+```
+
+ถ้ายังไม่เคยเปิด graph ของกล้อง CSI บน stage นี้ ให้รัน `scripts/isaac_add_csi_cameras.py` ก่อน
+(รายละเอียดอยู่ในหัวข้อ YOLO ข้างบน)
+
+### ขั้นที่ 1 — ปรับสีก่อนขับ
+
+กด **PLAY** ใน Isaac Sim แล้ว:
+
+```bash
+ros2 launch qcar2_isaac_nav2 qcar2_lane_follow_launch.py tune:=true
+```
+
+หน้าต่างที่เปิดมาคือ**ภาพเดียวกับที่ตัวขับเห็น** ไม่ใช่แค่ mask เปล่า ๆ — มี ROI, แถบ look-ahead,
+เส้นที่ตรวจเจอ และจุดที่รถจะเล็งไป วาดทับให้หมด คำถามที่ต้องตอบคือ
+"จุดเล็งไปกลางเลนไหม" ไม่ใช่แค่ "mask ติดเส้นไหม"
+
+| slider | ทำอะไร |
+|---|---|
+| `colour 0=white 1=blue` | สลับว่ากำลังปรับสีไหน สไลเดอร์ H/S/V จะโหลดค่าของสีนั้นมาให้ |
+| `H min/max` | ช่วง hue (OpenCV ใช้ 0–179 ไม่ใช่ 0–360) — สีขาวเปิดกว้าง 0–179 ไปเลย |
+| `S min/max` | ความอิ่มสี — **สีขาวคือ S ต่ำ** สีน้ำเงินคือ S สูง |
+| `V min/max` | ความสว่าง — สีขาวคือ V สูง |
+| `roi top %` | ตัดส่วนบนของภาพทิ้ง เอาไว้ไม่ให้ผนัง/ขอบฟ้าเข้ามาปน |
+| `band %` | มองไกลแค่ไหน วัดขึ้นจากขอบล่างของ ROI — มากขึ้น = มองไกลขึ้น = นิ่งขึ้นแต่ตอบสนองช้าลง |
+
+- ปรับ **ขาว** บนถนนที่มีขาว 2 ข้าง ปรับ **น้ำเงิน** บนถนนที่มีเส้นกลาง — ค่าทั้งสองสีอยู่ในไฟล์เดียวกัน
+- กด **`s`** เซฟ, **`q`** ออก
+
+ไฟล์ที่ได้คือ `~/.ros/qcar2_lane_colors.yaml` — **ไม่ใช่** `config/lane_colors.yaml` ใน source
+เพราะ `config/` ถูก install ผ่าน CMake ค่าที่แก้ตรงนั้นจะไม่มีผลจนกว่าจะ `colcon build` ใหม่
+(กับดักคลาสสิกของ workspace นี้) การเซฟลง `~/.ros` ทำให้วน "จูน → ขับ → จูนใหม่" ได้ด้วย 2 คำสั่ง
+เหมือนที่เส้นทาง V-SLAM เก็บ `.db` ไว้ที่เดียวกัน launch จะหยิบไฟล์นี้ถ้ามี ถ้าไม่มีค่อยใช้
+`config/lane_colors.yaml` ที่แถมมาในแพ็กเกจ
+
+### ขั้นที่ 2 — ขับ
+
+```bash
+ros2 launch qcar2_isaac_nav2 qcar2_lane_follow_launch.py
+
+# อีก terminal: ดูว่ามันเห็นอะไรอยู่
+ros2 run rqt_image_view rqt_image_view /lane/debug_image
+```
+
+### อาร์กิวเมนต์
+
+| อาร์กิวเมนต์ | ค่าเริ่มต้น | หมายเหตุ |
+|---|---|---|
+| `tune` | `false` | `true` = เปิดหน้าต่างปรับสี ไม่ publish cmd_vel |
+| `colors` | (ว่าง) | ว่าง = ใช้ `~/.ros/qcar2_lane_colors.yaml` ถ้ามี ไม่งั้นใช้ของในแพ็กเกจ |
+| `image_topic` | `/csi_front/image_raw` | กล้องที่ใช้หาเลน |
+| `cmd_topic` | `/cmd_vel_twist` | `angular.z` ที่นี่คือ **มุมเลี้ยว** ไม่ใช่ yaw rate |
+| `speed` | `0.30` | m/s กล้องออกแค่ ~10 Hz เร็วกว่านี้คือเลี้ยวจากภาพเก่า เข้าโค้งจะลดให้เอง |
+| `kp` | `0.70` | เกนต่อ error ที่ normalize แล้ว (-1..+1 เทียบครึ่งความกว้างภาพ) |
+| `kd` | `0.10` | หน่วง — รถส่ายบนทางตรงให้เพิ่มค่านี้ |
+| `max_steering_angle` | `0.50` | rad ต้องเท่ากับใน bridge และรัศมีวงเลี้ยวของ Nav2 |
+| `publish_debug` | `true` | `/lane/debug_image` |
+
+### กับดักที่เจอมาแล้ว
+
+**`angular.z` เป็นบวก = เลี้ยวซ้าย** เลนที่อยู่ทาง**ขวา**ของกลางภาพ (error > 0) จึงต้องได้มุมเลี้ยว
+**ติดลบ** ถ้ากลับเครื่องหมายผิด รถจะวิ่งออกนอกเลนเร็วขึ้นเรื่อย ๆ แทนที่จะเข้าเลน
+
+**watchdog ไม่ publish ซ้ำ** Isaac drive graph จำ Twist ตัวสุดท้ายไว้เอง ถ้า watchdog ส่งคำสั่งเดิมซ้ำ
+`/cmd_vel_twist` จะกลายเป็น 20 Hz และมีคำสั่งเก่าสลับกับคำสั่งใหม่ หน้าที่เดียวของมันคือ
+**สั่งหยุด** เมื่อไม่เจอเลน (หรือกล้องดับ) เกิน `lost_timeout` — เลนหายไป 1–2 เฟรมที่ 10 Hz
+เป็นเรื่องปกติ ไม่ต้องเบรก
+
+**สไลเดอร์ไม่มีตัวหนังสือ** opencv ตัวที่ pip ลงไว้ชี้ `QT_QPA_FONTDIR` ไปยังโฟลเดอร์ฟอนต์ที่มันไม่ได้แถมมา
+Qt เลยไม่มีฟอนต์ใช้ ป้ายบนสไลเดอร์เลยว่างเปล่า `_fix_qt_fonts()` ใน `lane_follower.py` ชี้กลับไปที่
+ฟอนต์ของระบบก่อนเปิดหน้าต่าง (Qt อ่านตัวแปรนี้ตอนเปิด GUI ไม่ใช่ตอน `import cv2` จึงยังทัน)
+
+**ไม่ใช้ cv_bridge** เหตุผลเดียวกับ `yolo_detector.py` — segfault เงียบ ๆ ใต้ NumPy ของ Isaac
+decode/encode ภาพทำด้วย NumPy ล้วน ส่วน `cv2` ใช้แค่แปลงสี ทำ mask และวาด ซึ่งไม่ข้ามเส้นนั้น
+
+---
+
 ## โครงสร้างไฟล์
 
 ```
@@ -469,6 +583,7 @@ src/qcar2_isaac_nav2/
 │   ├── qcar2_vslam_mapping_launch.py      เฟส 1 (กล้อง) RTAB-Map RGB-D
 │   ├── qcar2_vslam_navigation_launch.py   เฟส 2 (กล้อง) RTAB-Map localization
 │   ├── qcar2_yolo_launch.py               YOLO บนกล้อง CSI 360 องศา
+│   ├── qcar2_lane_follow_launch.py        ขับตามเลนด้วยกล้อง (จูนสี / ขับ)
 │   ├── qcar2_cartographer_launch.py       (ของเดิม) เปิด cartographer อย่างเดียว
 │   └── qcar2_slam_and_nav_bringup_launch.py  (ของเดิม) SLAM+Nav2 พร้อมกัน ไม่ใช้แมพที่เซฟ
 ├── config/
@@ -482,7 +597,8 @@ src/qcar2_isaac_nav2/
 │   └── navigate_through_poses_ackermann.xml   BT ตัด Spin ออก
 ├── src/
 │   ├── twist_stamped_to_twist.py          bridge Nav2 -> Isaac Sim
-│   └── yolo_detector.py                   YOLO บนกล้อง CSI (ไม่ใช้ cv_bridge)
+│   ├── yolo_detector.py                   YOLO บนกล้อง CSI (ไม่ใช้ cv_bridge)
+│   └── lane_follower.py                   ขับตามเลน + หน้าต่างจูนสี (ไฟล์เดียว 2 โหมด)
 ├── scripts/
 │   ├── save_map.sh                        เซฟแมพ (lidar)
 │   ├── save_vslam_map.sh                  เซฟแมพ (กล้อง) จาก /map ของ RTAB-Map
@@ -517,6 +633,9 @@ src/qcar2_isaac_nav2/
 | `config/qcar2_nav2_vslam.yaml` | ก๊อปมาจากไฟล์บน เปลี่ยนเฉพาะครึ่งเซนเซอร์: ตัด `/scan` ทิ้งหมด, obstacle layer เป็น **VoxelLayer** กิน PointCloud2 จาก depth, ระยะ 12 ม. ทุกที่ — จูน planner/controller เมื่อไหร่ต้องแก้ให้ตรงกันทั้งสองไฟล์ |
 | `behavior_trees/*_ackermann.xml` | BT ที่เอา `Spin` ออกแล้วใช้ `BackUp` แทน เพราะรถ Ackermann หมุนอยู่กับที่ไม่ได้ ต้องแก้ **ทั้งสองไฟล์** ไม่งั้น `bt_navigator` activate ไม่ผ่าน |
 | `src/yolo_detector.py` | node เดียวกิน CSI ทุกตัว รัน YOLO ตัวเดียวร่วมกัน (มี lock กันไม่ให้ 4 callback แย่ง CUDA stream เดียวกัน + ทิ้งเฟรมที่ค้างคิวแทนที่จะไล่ทำของเก่า) publish detections/annotated/mosaic |
+| `launch/qcar2_lane_follow_launch.py` | เปิด `lane_follower` โหมดจูนสีหรือโหมดขับ เลือกไฟล์สีให้เอง (`~/.ros` ก่อน แล้วค่อยของในแพ็กเกจ) — `tune:=true` เป็นตัวเดียวที่สลับโหมด ที่เหลือใช้ร่วมกันหมด |
+| `src/lane_follower.py` | หา error จากกลางเลนด้วย HSV mask แล้วแปลงเป็นมุมเลี้ยวส่ง `/cmd_vel_twist` ตรง ๆ ไม่ผ่าน Nav2 — โหมดจูนสีใช้ `LaneDetector` **ตัวเดียวกัน** กับตอนขับ ค่าที่เห็นในหน้าต่างจึงคือค่าที่รถใช้จริง |
+| `config/lane_colors.yaml` | ค่า HSV ตั้งต้น เป็น ROS parameter file ธรรมดา node เลยไม่ต้องอ่าน YAML เอง ของจริงที่จูนแล้วอยู่ `~/.ros/qcar2_lane_colors.yaml` |
 | `src/twist_stamped_to_twist.py` | แปลง `/cmd_vel_nav` (TwistStamped, yaw rate) เป็น `/cmd_vel_twist` (Twist, **มุมเลี้ยว**) ด้วย `δ = atan(ω·L/v)` — สำคัญที่สุดในแพ็กเกจนี้ |
 | `scripts/isaac_add_depth_camera.py` | รันใน Isaac Sim Script Editor — สร้างกล้อง depth ใต้ `realsenseDepth` แล้วต่อ OmniGraph publish `/realsense_depth` + `/realsense_depth_camera_info` (asset เดิมมีแต่ Xform เปล่า ๆ ไม่มีกล้องและไม่มี graph) |
 | `scripts/save_map.sh` | สั่ง `finish_trajectory` + `write_state` (.pbstream) แล้วเรียก `map_saver_cli` เขียน `.yaml`/`.pgm` ลง `maps/` ใน source |

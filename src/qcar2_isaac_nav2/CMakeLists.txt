@@ -67,6 +67,7 @@ install(DIRECTORY maps
 install(PROGRAMS
   src/twist_stamped_to_twist.py
   src/yolo_detector.py
+  src/lane_follower.py
   scripts/save_map.sh
   scripts/save_vslam_map.sh
   scripts/isaac_add_depth_camera.py

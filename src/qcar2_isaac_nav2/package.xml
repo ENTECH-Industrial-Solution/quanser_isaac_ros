@@ -53,6 +53,11 @@
        machine's NumPy, see the comment at the top of src/yolo_detector.py. -->
   <exec_depend>vision_msgs</exec_depend>
 
+  <!-- Camera lane following (qcar2_lane_follow_launch.py). Uses cv2 for HSV
+       masking and the tuner's trackbar window; cv_bridge stays absent for the
+       reason given in src/yolo_detector.py. -->
+  <exec_depend>python3-opencv</exec_depend>
+
   <buildtool_depend>ament_cmake</buildtool_depend>
 
   <test_depend>ament_lint_auto</test_depend>
