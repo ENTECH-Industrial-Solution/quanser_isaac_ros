@@ -62,6 +62,58 @@ from launch_ros.actions import Node
 # colcon build - the classic silent no-op in this workspace.
 TUNED_COLORS = os.path.expanduser('~/.ros/qcar2_lane_colors.yaml')
 
+# Arguments the PROFILE owns. Each declares an empty default so that "the user
+# typed it" can be told from "the user did not" - a launch argument always
+# arrives with a value, and a node-specific override beats a params file however
+# the two are ordered, so a normal default would silently win over the profile
+# every time and the file would do nothing.
+FOLLOWER_TUNED = ('speed', 'kp', 'kd', 'k_head', 'max_error_rate',
+                  'max_steering_angle', 'avoid_offset_frac',
+                  'blue_is_centre_line')
+AVOIDER_TUNED = ('scan_topics', 'trigger_distance', 'corridor_half_width',
+                 'stop_distance', 'pass_distance', 'max_avoid_distance',
+                 'side_clear_time')
+
+
+def typed(context, names):
+    """Only the tunables actually given on the command line.
+
+    The value goes in as the LaunchConfiguration itself, not as the string it
+    performs to. launch_ros only runs a parameter value through YAML when it is
+    a Substitution; hand it a plain str and it stays a str, so `speed:=0.15`
+    reaches the node as STRING and rclpy rejects it against a DOUBLE
+    declaration before the node has started. The string is performed here only
+    to ask whether the argument was given at all.
+    """
+    out = {}
+    for n in names:
+        if LaunchConfiguration(n).perform(context).strip():
+            out[n] = LaunchConfiguration(n)
+    return out
+
+
+def find_profile(pkg_share, name):
+    """~/.ros first, then the packaged copy.
+
+    Same rule as the colours file, and for the same reason: config/ is
+    installed by CMake, so a value edited there does nothing until the next
+    colcon build - the classic silent no-op in this workspace. A profile kept
+    in ~/.ros is edit-and-run.
+    """
+    # `ros2 launch` rejects an empty value on the command line ('profile:=' is
+    # a malformed argument), so `none` is the way to ask for no profile at all.
+    if not name or name.lower() == 'none':
+        return None
+    if os.path.isabs(name) or name.endswith('.yaml'):
+        path = os.path.expanduser(name)
+    else:
+        home = os.path.expanduser(f'~/.ros/qcar2_{name}.yaml')
+        path = home if os.path.exists(home) else os.path.join(
+            pkg_share, 'config', f'{name}.yaml')
+    if not os.path.exists(path):
+        raise RuntimeError(f'profile not found: {path}')
+    return path
+
 
 def launch_setup(context, *args, **kwargs):
     pkg_share = get_package_share_directory('qcar2_isaac_nav2')
@@ -75,29 +127,24 @@ def launch_setup(context, *args, **kwargs):
 
     tune = LaunchConfiguration('tune').perform(context).lower() in ('true', '1')
     state_topic = LaunchConfiguration('state_topic').perform(context)
+    profile = find_profile(pkg_share,
+                           LaunchConfiguration('profile').perform(context).strip())
 
-    # Launch arguments arrive as node-specific overrides and therefore beat the
-    # `/**:` wildcard in the colours file regardless of order, which is what we
-    # want: the file owns the colours, the command line owns the driving.
-    overrides = {
+    # Order is the precedence: profile, then anything typed on the command line.
+    # Both are node-specific, so the later one wins. The colours file is a `/**:`
+    # wildcard and loses to either, which is what we want - it owns the colours
+    # and nothing else.
+    structural = {
         'use_sim_time': LaunchConfiguration('use_sim_time'),
         'image_topic': LaunchConfiguration('image_topic'),
     }
     if not tune:
-        overrides.update({
+        structural.update({
             'cmd_topic': LaunchConfiguration('cmd_topic'),
-            'speed': LaunchConfiguration('speed'),
-            'kp': LaunchConfiguration('kp'),
-            'kd': LaunchConfiguration('kd'),
-            'max_steering_angle': LaunchConfiguration('max_steering_angle'),
             'publish_debug': LaunchConfiguration('publish_debug'),
             # Set before the Node is built: launch_ros normalises `parameters`
             # at construction, so mutating this dict afterwards is silently lost.
             'avoid_topic': state_topic,
-            'max_error_rate': LaunchConfiguration('max_error_rate'),
-            'k_head': LaunchConfiguration('k_head'),
-            'avoid_offset_frac': LaunchConfiguration('avoid_offset_frac'),
-            'blue_is_centre_line': LaunchConfiguration('blue_is_centre_line'),
         })
 
     follower = Node(
@@ -106,7 +153,8 @@ def launch_setup(context, *args, **kwargs):
         name='lane_tuner' if tune else 'lane_follower',
         output='screen',
         arguments=['--tune'] if tune else [],
-        parameters=[colors, overrides],
+        parameters=([profile] if profile else [])
+                   + [colors, structural, typed(context, FOLLOWER_TUNED)],
     )
     if tune:
         # The tuner publishes no cmd_vel, so there is nothing for an avoider to
@@ -117,29 +165,18 @@ def launch_setup(context, *args, **kwargs):
     if not avoid:
         return [follower]
 
-    # Anything not named here keeps obstacle_avoider.py's own default; the
-    # params file is the way to reach the rest (the side window in particular)
-    # without a rebuild, which editing config/ would need.
-    avoid_params = LaunchConfiguration('avoid_params').perform(context)
-    if avoid_params and not os.path.exists(avoid_params):
-        raise RuntimeError(f'avoid_params file not found: {avoid_params}')
-    avoider_overrides = {
-        'use_sim_time': LaunchConfiguration('use_sim_time'),
-        'state_topic': state_topic,
-        'scan_topics': LaunchConfiguration('scan_topics'),
-        'trigger_distance': LaunchConfiguration('trigger_distance'),
-        'corridor_half_width': LaunchConfiguration('corridor_half_width'),
-        'stop_distance': LaunchConfiguration('stop_distance'),
-        'pass_distance': LaunchConfiguration('pass_distance'),
-        'max_avoid_distance': LaunchConfiguration('max_avoid_distance'),
-        'side_clear_time': LaunchConfiguration('side_clear_time'),
-    }
+    # Everything the profile does not set keeps obstacle_avoider.py's own
+    # default - including the ones with no launch argument at all, such as the
+    # side window geometry and min_hits.
     avoider = Node(
         package='qcar2_isaac_nav2',
         executable='obstacle_avoider.py',
         name='obstacle_avoider',
         output='screen',
-        parameters=([avoid_params] if avoid_params else []) + [avoider_overrides],
+        parameters=([profile] if profile else [])
+                   + [{'use_sim_time': LaunchConfiguration('use_sim_time'),
+                       'state_topic': state_topic},
+                      typed(context, AVOIDER_TUNED)],
     )
 
     # 3 m of depth is plenty when the pull-out happens around 2 m, and a short
@@ -171,6 +208,17 @@ def generate_launch_description():
             description='Open the HSV tuning window instead of driving. '
                         'Publishes no cmd_vel.'),
         DeclareLaunchArgument(
+            'profile', default_value='lane_avoid',
+            description='Tuning profile: a ROS 2 parameter file holding the '
+                        'driving and avoidance values so they do not have to be '
+                        'retyped. Resolved as ~/.ros/qcar2_<name>.yaml if that '
+                        'exists, else config/<name>.yaml in the package - the '
+                        'first is edit-and-run, the second needs a colcon '
+                        'build. A path ending in .yaml is used as given. Empty '
+                        'loads no profile and every node keeps its own '
+                        'defaults. Anything typed on the command line still '
+                        'wins over the file.'),
+        DeclareLaunchArgument(
             'colors', default_value='',
             description='Lane colours parameter file. Empty means '
                         '~/.ros/qcar2_lane_colors.yaml if it exists, else the '
@@ -185,22 +233,22 @@ def generate_launch_description():
                         'QCar2 drive graph topic, so angular.z is a front-wheel '
                         'STEERING ANGLE in radians, not a yaw rate.'),
         DeclareLaunchArgument(
-            'speed', default_value='0.50',
-            description='Straight-line speed [m/s]. The camera runs at ~10 Hz, '
+            'speed', default_value='',
+            description='Empty = take it from the profile. Straight-line speed [m/s]. The camera runs at ~10 Hz, '
                         'so faster than this steers on stale frames. Reduced '
                         'automatically in corners.'),
         DeclareLaunchArgument(
-            'kp', default_value='0.70',
-            description='Steering gain on the normalised lateral error '
+            'kp', default_value='',
+            description='Empty = take it from the profile. Steering gain on the normalised lateral error '
                         '(-1..+1 across the image). 0.70 asks for 0.35 rad of '
                         'steer at half-image error.'),
         DeclareLaunchArgument(
-            'kd', default_value='0.10',
-            description='Damping on the rate of change of that error. Raise it '
+            'kd', default_value='',
+            description='Empty = take it from the profile. Damping on the rate of change of that error. Raise it '
                         'if the car weaves down a straight lane.'),
         DeclareLaunchArgument(
-            'max_steering_angle', default_value='0.50',
-            description='Steering clamp [rad]. Isaac Sim clamps around 0.5; '
+            'max_steering_angle', default_value='',
+            description='Empty = take it from the profile. Steering clamp [rad]. Isaac Sim clamps around 0.5; '
                         'keep this equal to the bridge and the Nav2 turning '
                         'radius so all three agree about the car.'),
         DeclareLaunchArgument(
@@ -219,8 +267,8 @@ def generate_launch_description():
                         'leaves plain lane following: the follower assumes '
                         '`follow` whenever nobody publishes the state topic.'),
         DeclareLaunchArgument(
-            'k_head', default_value='0.5',
-            description='Gain on the lane DIRECTION - where the boundaries seen '
+            'k_head', default_value='',
+            description='Empty = take it from the profile. Gain on the lane DIRECTION - where the boundaries seen '
                         'in the two look-ahead bands converge, which is off the '
                         'image centre exactly when the car is not aligned with '
                         'the lane. It is what stops a lane change carrying past '
@@ -229,8 +277,8 @@ def generate_launch_description():
                         'peak heading 43 deg against 34. Above ~1 the car stops '
                         'short of the new lane instead.'),
         DeclareLaunchArgument(
-            'max_error_rate', default_value='0.8',
-            description='How fast the aim point may travel sideways, in units '
+            'max_error_rate', default_value='',
+            description='Empty = take it from the profile. How fast the aim point may travel sideways, in units '
                         'of half-image per second. Switching to `avoid` moves '
                         'it a whole lane at once, and steering on that step is '
                         'full lock, which swings the camera off the road and '
@@ -238,8 +286,8 @@ def generate_launch_description():
                         'lane change that keeps the lines in view; too low and '
                         'the car reacts to a real obstacle too slowly.'),
         DeclareLaunchArgument(
-            'avoid_offset_frac', default_value='0.45',
-            description='Where `avoid` puts the car on a road with NO centre '
+            'avoid_offset_frac', default_value='',
+            description='Empty = take it from the profile. Where `avoid` puts the car on a road with NO centre '
                         'line, as a fraction of the half corridor width from '
                         'the left edge line: 1.0 is the middle, 0 is on the '
                         'line. Only used on single carriageways - with a blue '
@@ -248,8 +296,8 @@ def generate_launch_description():
                         '/lane/debug_image while tuning: the aim point must '
                         'stay clear of the left line.'),
         DeclareLaunchArgument(
-            'blue_is_centre_line', default_value='true',
-            description='True only where a blue line really divides two '
+            'blue_is_centre_line', default_value='',
+            description='Empty = take it from the profile. True only where a blue line really divides two '
                         'directions of traffic. It switches on both two-lane '
                         'rules: `avoid` crosses the line into the left lane, '
                         'and `follow` treats blue-on-the-right as "wrong side, '
@@ -276,13 +324,13 @@ def generate_launch_description():
                         'at 0.194 m and the Nav2 routes\' 10-row band both fly '
                         'straight over. See launch/depth_scan_launch.py.'),
         DeclareLaunchArgument(
-            'scan_topics', default_value="['/scan', '/scan_depth']",
-            description='LaserScan sources, all measured in base_link through '
+            'scan_topics', default_value='',
+            description='Empty = take it from the profile. LaserScan sources, all measured in base_link through '
                         'TF. Drop /scan_depth here if the depth camera is not '
                         'set up, to silence its staleness warning.'),
         DeclareLaunchArgument(
-            'trigger_distance', default_value='1.00',
-            description='Pull out when something is this far ahead [m]. The '
+            'trigger_distance', default_value='',
+            description='Empty = take it from the profile. Pull out when something is this far ahead [m]. The '
                         'main knob, and the one that decides whether the car '
                         'clears the obstacle or clips it. Bicycle model: at '
                         'full lock the turn radius is 0.258/tan(0.42) = 0.58 m, '
@@ -297,21 +345,21 @@ def generate_launch_description():
                         'figure above it cannot get clear at all. Watch '
                         '/lane/front_distance while it happens.'),
         DeclareLaunchArgument(
-            'corridor_half_width', default_value='0.22',
-            description='Half width of the forward window [m]. The car body is '
+            'corridor_half_width', default_value='',
+            description='Empty = take it from the profile. Half width of the forward window [m]. The car body is '
                         '0.19 m wide, so this is a body plus a little margin - '
                         'widen it and roadside furniture starts triggering.'),
         DeclareLaunchArgument(
-            'stop_distance', default_value='0.25',
-            description='Brake instead of steering when something is this close '
+            'stop_distance', default_value='',
+            description='Empty = take it from the profile. Brake instead of steering when something is this close '
                         '[m] - the obstacle appeared too late to drive round, '
                         'or the left lane is blocked too. Measured from '
                         'base_link, and the nose is ~0.2 m ahead of that, so '
                         '0.45 is about 0.25 m of actual clearance. 0 disables '
                         'braking.'),
         DeclareLaunchArgument(
-            'pass_distance', default_value='0.50',
-            description='How far to keep going [m] AFTER the obstacle leaves '
+            'pass_distance', default_value='',
+            description='Empty = take it from the profile. How far to keep going [m] AFTER the obstacle leaves '
                         'the forward window - i.e. after drawing level with it '
                         '- before merging back. So it means the obstacle\'s '
                         'length plus the car\'s, and it does not change when '
@@ -320,19 +368,13 @@ def generate_launch_description():
                         'see, since the side window is lidar-only (the depth '
                         'camera sees +/-33 deg and never abeam).'),
         DeclareLaunchArgument(
-            'max_avoid_distance', default_value='8.00',
-            description='Give up and merge back after this far [m], for an '
+            'max_avoid_distance', default_value='',
+            description='Empty = take it from the profile. Give up and merge back after this far [m], for an '
                         'obstacle the side window never manages to see.'),
         DeclareLaunchArgument(
-            'side_clear_time', default_value='0.80',
-            description='The lane we came from must read clear for this long [s] '
+            'side_clear_time', default_value='',
+            description='Empty = take it from the profile. The lane we came from must read clear for this long [s] '
                         'before we merge back. At 4 Hz of lidar this is two or '
                         'three scans, so one dropout cannot cut us back early.'),
-        DeclareLaunchArgument(
-            'avoid_params', default_value='',
-            description='Optional ROS 2 parameter file for obstacle_avoider, '
-                        'for the parameters not exposed above - the side window '
-                        'geometry (side_x_min/max, side_y_min/max), min_hits, '
-                        'min_range, scan_timeout, rate.'),
         OpaqueFunction(function=launch_setup),
     ])

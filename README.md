@@ -35,6 +35,10 @@ Isaac Sim เป็นคนจำลองหุ่นยนต์และส�
 ros2 launch qcar2_isaac_nav2 qcar2_lane_follow_launch.py
 ```
 
+ค่าที่จูนแล้วทั้งหมดอยู่ใน `config/lane_avoid.yaml` (อาร์กิวเมนต์ `profile`) คำสั่งจึงสั้นแค่นี้
+ใส่ค่าท้ายคำสั่งเมื่อไรก็ชนะไฟล์เมื่อนั้น เช่น `speed:=0.15` และ `avoid:=false` คือขับตามเลน
+เปล่า ๆ ไม่มีตัวหลบ
+
 ## Build
 
 ```bash

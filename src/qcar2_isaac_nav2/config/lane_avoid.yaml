@@ -1,0 +1,72 @@
+# Tuning profile for camera lane following with obstacle avoidance.
+#
+#   ros2 launch qcar2_isaac_nav2 qcar2_lane_follow_launch.py
+#
+# `profile` defaults to this file, so the command above is the whole command.
+# Anything typed on the command line still wins over what is here, so a one-off
+# experiment does not mean editing the file:
+#
+#   ros2 launch ... qcar2_lane_follow_launch.py speed:=0.15 trigger_distance:=2.0
+#
+# EDITING THIS FILE NEEDS A colcon build - config/ is installed by CMake, which
+# is the classic silent no-op in this workspace. To edit and run, copy it to
+# ~/.ros/qcar2_lane_avoid.yaml; the launch file prefers that copy when it exists.
+#
+# Lane COLOURS are not here. They live in ~/.ros/qcar2_lane_colors.yaml, written
+# by `tune:=true`, because that is a different job with a different tool.
+
+lane_follower:
+  ros__parameters:
+    # Straight-line speed [m/s]; reduced automatically in corners.
+    speed: 0.50
+    # Steering on the lateral error, and damping on its rate of change.
+    kp: 0.70
+    kd: 0.10
+    # Steering on the lane's DIRECTION - where the boundaries seen in the two
+    # look-ahead bands converge. Without it a lane change carries past the lane
+    # it aimed for; above ~1 the car stops short of it instead.
+    k_head: 0.5
+    # How fast the aim point may travel sideways [half-image/s]. Switching to
+    # `avoid` moves it a whole lane at once and steering on that step is full
+    # lock, which swings the camera off the road.
+    max_error_rate: 0.8
+    # Must match the bridge and Isaac's own clamp.
+    max_steering_angle: 0.50
+    # true: cross the blue centre line into the left lane and come back.
+    # false: no centre line on this road, so shift within the same corridor
+    # using avoid_offset_frac instead. On the shipped Isaac map the edge lines
+    # read as blue unless the colours are tuned to keep white and blue apart.
+    blue_is_centre_line: true
+    # Only used when blue_is_centre_line is false, or no blue line is in view:
+    # where to sit as a fraction of the half corridor from the LEFT edge line.
+    avoid_offset_frac: 0.45
+
+obstacle_avoider:
+  ros__parameters:
+    # Both sensors, one code path, everything measured in base_link via TF.
+    # /scan_depth exists only while depth_scan_launch.py runs, which
+    # use_depth_scan:=true starts. Drop it here to silence the staleness
+    # warning when the depth camera is not on the stage.
+    scan_topics: ['/scan', '/scan_depth']
+    # Pull out when something is this far ahead [m]. A full 0.66 m lane change
+    # costs ~1.75 m of forward travel plus ~0.2 m of nose, so much below 2 m
+    # means full lock and passing close. Raise it now that the lidar sees the
+    # obstacles - it reaches 8 m where the depth scan stops at 3.
+    trigger_distance: 1.00
+    # Half width of the forward window [m]. The car body is 0.19 m wide.
+    corridor_half_width: 0.22
+    # Brake instead of steering when something is this close [m], measured from
+    # base_link with the nose ~0.2 m further forward. 0 disables braking.
+    stop_distance: 0.25
+    # How far to keep going [m] AFTER the obstacle leaves the forward window,
+    # i.e. after drawing level: the obstacle's length plus the car's. Measured
+    # from level rather than from the trigger, so it does not change when
+    # trigger_distance does.
+    pass_distance: 0.50
+    # The lane we came from must read clear for this long [s] before merging
+    # back. At 4 Hz of lidar this is a few scans, so one dropout cannot cut the
+    # manoeuvre short.
+    side_clear_time: 0.80
+    # Give up and merge back after this far [m], for an obstacle the side
+    # window never manages to see.
+    max_avoid_distance: 8.00
