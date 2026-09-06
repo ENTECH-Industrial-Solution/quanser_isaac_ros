@@ -17,6 +17,12 @@
   <depend>sensor_msgs</depend>
   <depend>control_msgs</depend>
 
+  <!-- Every node under src/ is Python; nav_msgs is Odometry, which
+       obstacle_avoider.py uses to measure how far an overtake has run.
+       Both are already find_package'd by CMakeLists.txt. -->
+  <depend>rclpy</depend>
+  <depend>nav_msgs</depend>
+
   <!-- Navigation2 dependencies -->
   <exec_depend>nav2_costmap_2d</exec_depend>
   <exec_depend>nav2_core</exec_depend>

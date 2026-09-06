@@ -62,12 +62,20 @@ PRESETS = {
         "ros_qcar2_csi_left",
         "ros_qcar2_csi_right",
     },
+    # Lane following with obstacle avoidance - qcar2_lane_follow_launch.py.
+    # The front CSI camera finds the lane; the depth camera is the avoider's
+    # second obstacle source next to the lidar, which costs nothing extra.
+    # Two render products, the same budget as `csi_front` plus one.
+    "lane_avoid": {
+        "ros_qcar2_csi_front",
+        "ros_qcar2_realsense_depth",
+    },
     # No cameras at all - lidar/AMCL navigation, or measuring what the cameras
     # actually cost by taking them away.
     "none": set(),
 }
 
-PRESET = os.environ.get("QCAR2_CAMERA_PRESET", "csi")
+PRESET = os.environ.get("QCAR2_CAMERA_PRESET", "csi_front")
 
 
 def main():

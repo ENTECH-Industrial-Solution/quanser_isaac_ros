@@ -117,60 +117,16 @@ def launch_setup(context, *args, **kwargs):
         parameters=[{'use_sim_time': use_sim_time}],
     )
 
-    # --- RealSense depth -> extra LaserScan -> local costmap ------------------
-    #
-    # depthimage_to_laserscan collapses the centre rows of the depth image into a
-    # LaserScan. It does NOT stamp the camera's own frame on the result: the
-    # ranges it emits follow the LaserScan convention (angles about +z, zero at
-    # +x), while Isaac's `realsenseDepth` frame is an OPTICAL frame (+z forward,
-    # +y down). Publishing the scan in `realsenseDepth` would rotate every
-    # obstacle 90 degrees into the floor.
-    #
-    # So declare a second, non-optical child of base_link at the same physical
-    # spot as the depth sensor - translation copied from the QCar2 USD
-    # (base_link -> realsenseDepth = 0.095, -0.003, 0.176 m) with no rotation -
-    # and hand that to output_frame.
-    depth_scan_frame_node = Node(
-        package='tf2_ros',
-        executable='static_transform_publisher',
-        name='depth_scan_frame',
-        output='screen',
+    # RealSense depth -> /scan_depth, as a live obstacle source for the local
+    # costmap. See launch/depth_scan_launch.py for the frame and scan_height
+    # traps; 3 m is enough for a costmap that only needs what is
+    # about to be driven over.
+    depth_scan = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(pkg_share, 'launch', 'depth_scan_launch.py')),
         condition=IfCondition(use_depth_scan),
-        parameters=[{'use_sim_time': use_sim_time}],
-        arguments=[
-            '--x', '0.095', '--y', '-0.003', '--z', '0.176',
-            '--roll', '0', '--pitch', '0', '--yaw', '0',
-            '--frame-id', 'base_link',
-            '--child-frame-id', 'depth_scan_link',
-        ],
-    )
-
-    # scan_height is the number of image rows collapsed around the optical axis,
-    # and it is the one parameter that will bite you. The camera sits 0.176 m up
-    # looking straight ahead, so a row `n` pixels below centre stares at the
-    # floor at 0.176 / tan(atan(n / fy)) metres, with fy ~= 484. At 10 rows
-    # (+/- 5) the floor lands ~17 m out, far past range_max, so it is discarded.
-    # Widen this to catch shorter obstacles and the floor starts registering as
-    # a wall a few metres ahead instead.
-    depth_to_scan_node = Node(
-        package='depthimage_to_laserscan',
-        executable='depthimage_to_laserscan_node',
-        name='depth_to_scan',
-        output='screen',
-        condition=IfCondition(use_depth_scan),
-        parameters=[{
-            'use_sim_time': use_sim_time,
-            'output_frame': 'depth_scan_link',
-            'range_min': 0.25,
-            'range_max': 3.0,
-            'scan_height': 10,
-            'scan_time': 0.1,
-        }],
-        remappings=[
-            ('depth', '/realsense_depth'),
-            ('depth_camera_info', '/realsense_depth_camera_info'),
-            ('scan', '/scan_depth'),
-        ],
+        launch_arguments={'use_sim_time': use_sim_time,
+                          'range_max': '3.0'}.items(),
     )
 
     rviz_node = Node(
@@ -184,7 +140,7 @@ def launch_setup(context, *args, **kwargs):
     )
 
     return [localization_launch, navigation_launch, twist_bridge_node,
-            depth_scan_frame_node, depth_to_scan_node, rviz_node]
+            depth_scan, rviz_node]
 
 
 def generate_launch_description():

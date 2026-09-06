@@ -11,12 +11,19 @@
 #
 # HSV is OpenCV's convention: H 0-179, S 0-255, V 0-255.
 # White paint is "any hue, barely saturated, bright"; blue is a hue window.
+#
+# These are what 708,480 ROI pixels sampled around the Isaac map actually
+# contained: road V 62-121, paint V 152-214, white paint S 0-13, blue paint
+# H 101-109 / S 26-94 / V 141-222. The two ranges are kept MUTUALLY EXCLUSIVE
+# on saturation (split at S=20) on purpose - a white range that also covers the
+# blue one makes every blue pixel a white pixel too, and the centre-line rules
+# then fire on ordinary edge lines.
 /**:
   ros__parameters:
-    white_hsv_low: [0, 0, 170]
-    white_hsv_high: [179, 60, 255]
-    blue_hsv_low: [95, 90, 60]
-    blue_hsv_high: [130, 255, 255]
+    white_hsv_low: [0, 0, 120]
+    white_hsv_high: [179, 19, 255]
+    blue_hsv_low: [95, 20, 140]
+    blue_hsv_high: [115, 255, 255]
     # Fraction of the image height above which nothing is road.
     roi_top: 0.55
     # Look-ahead band, as a fraction of the ROI height measured up from its

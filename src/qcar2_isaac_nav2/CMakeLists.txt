@@ -68,12 +68,14 @@ install(PROGRAMS
   src/twist_stamped_to_twist.py
   src/yolo_detector.py
   src/lane_follower.py
+  src/obstacle_avoider.py
   scripts/save_map.sh
   scripts/save_vslam_map.sh
   scripts/isaac_add_depth_camera.py
   scripts/isaac_add_rgbd_camera.py
   scripts/isaac_add_csi_cameras.py
   scripts/isaac_camera_streams.py
+  scripts/isaac_sim_control.py
   scripts/isaac_apply_and_save.py
   DESTINATION lib/${PROJECT_NAME}
 )
