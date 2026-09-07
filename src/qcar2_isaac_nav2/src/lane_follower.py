@@ -568,6 +568,14 @@ class LaneFollower(Node):
         super().__init__('lane_follower')
         self.detector = declare_detector(self)
 
+        # THESE NUMBERS ARE FALLBACKS, NOT THE VALUES THE CAR RUNS ON.
+        #
+        # declare_parameter says "this parameter exists, with this type, and
+        # this is what it is worth if nobody supplies one". The launch file
+        # supplies one: config/lane_avoid.yaml goes in as --params-file, and
+        # anything typed on the command line after it. So the tuned values live
+        # in the profile, and these only take effect under `profile:=none`.
+        # They are deliberately the more cautious of the two.
         self.declare_parameter('image_topic', '/csi_front/image_raw')
         self.declare_parameter('cmd_topic', '/cmd_vel_twist')
         self.declare_parameter('speed', 1.00)

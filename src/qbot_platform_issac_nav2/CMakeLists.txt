@@ -43,10 +43,22 @@ install(DIRECTORY config
 )
 
 
+# Install maps saved by nav2_map_server map_saver_cli
+install(DIRECTORY maps
+  DESTINATION share/${PROJECT_NAME}/
+)
+
+
 # Install Python executables
 install(PROGRAMS
   src/twist_stamped_to_twist.py
   DESTINATION lib/${PROJECT_NAME}
+)
+
+
+# Isaac Sim stage patches - run inside Isaac Sim, not by ROS
+install(DIRECTORY scripts
+  DESTINATION share/${PROJECT_NAME}/
 )
 
 if(BUILD_TESTING)

@@ -3,6 +3,24 @@
 #   Image  /lane/debug_image  what the lane detector sees: masks, the two
 #                             look-ahead bands, the boundaries it picked, the
 #                             aim point, and the mode/error/heading text
+#   Marker /lane/windows     the two boxes the decision is actually made from,
+#                             GREEN while empty and RED while occupied: FRONT
+#                             (|y| <= corridor_half_width, out to
+#                             trigger_distance, pointing where the car points)
+#                             and BEHIND, which is held over the LANE the car
+#                             pulled out of - so while avoiding it stays put
+#                             over that lane instead of swinging out with the
+#                             bodywork. Watch it go red as the obstacle enters
+#                             it and green once the lane is free again: that
+#                             transition is what ends the overtake. A cloud of
+#                             lidar points says nothing about which of them are
+#                             being counted; these say exactly.
+#   Image  /realsense_depth   the raw depth camera, 32FC1 - normalised for
+#                             display, so near is dark and far is bright. This
+#                             is what /scan_depth is a single band out of, and
+#                             the place to look when the depth half sees
+#                             nothing: a black frame means the camera is inside
+#                             geometry, an empty one means it is not rendering
 #   LaserScan /scan           lidar, WHITE - 360 deg, sees only above 0.194 m
 #   LaserScan /scan_depth     depth camera, CYAN - +/-33 deg, reaches down to
 #                             ~0.09 m tall at 2 m, capped at 3 m
@@ -18,6 +36,7 @@ Panels:
     Name: Displays
     Property Tree Widget:
       Expanded:
+        - /Decision windows1
         - /LaserScan (lidar)1
         - /LaserScan (depth)1
       Splitter Ratio: 0.5
@@ -62,8 +81,8 @@ Visualization Manager:
       Name: LaserScan (lidar)
       Position Transformer: XYZ
       Selectable: true
-      Size (Pixels): 3
-      Size (m): 0.02
+      Size (Pixels): 4
+      Size (m): 0.03
       Style: Points
       Topic:
         Depth: 5
@@ -98,6 +117,18 @@ Visualization Manager:
       Use Fixed Frame: true
       Use rainbow: false
       Value: true
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: Decision windows
+      Namespaces:
+        {}
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /lane/windows
+      Value: true
     - Class: rviz_default_plugins/Image
       Enabled: true
       Max Value: 1
@@ -111,6 +142,20 @@ Visualization Manager:
         History Policy: Keep Last
         Reliability Policy: Best Effort
         Value: /lane/debug_image
+      Value: true
+    - Class: rviz_default_plugins/Image
+      Enabled: true
+      Max Value: 1
+      Median window: 5
+      Min Value: 0
+      Name: Depth camera
+      Normalize Range: true
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Value: /realsense_depth
       Value: true
   Enabled: true
   Global Options:
@@ -137,7 +182,7 @@ Visualization Manager:
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.01
-      Scale: 120
+      Scale: 55
       Target Frame: base_link
       Value: TopDownOrtho (rviz_default_plugins)
       X: 1.5
@@ -149,6 +194,8 @@ Window Geometry:
   Height: 900
   Hide Left Dock: false
   Hide Right Dock: false
+  Depth camera:
+    collapsed: false
   Lane detector:
     collapsed: false
   Width: 1500

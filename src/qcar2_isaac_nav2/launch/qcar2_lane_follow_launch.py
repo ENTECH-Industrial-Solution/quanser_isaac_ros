@@ -72,7 +72,7 @@ FOLLOWER_TUNED = ('speed', 'kp', 'kd', 'k_head', 'max_error_rate',
                   'blue_is_centre_line')
 AVOIDER_TUNED = ('scan_topics', 'trigger_distance', 'corridor_half_width',
                  'stop_distance', 'pass_distance', 'max_avoid_distance',
-                 'side_clear_time')
+                 'side_clear_time', 'lane_half_width', 'min_clearance')
 
 
 def typed(context, names):
@@ -359,9 +359,10 @@ def generate_launch_description():
                         'braking.'),
         DeclareLaunchArgument(
             'pass_distance', default_value='',
-            description='Empty = take it from the profile. How far to keep going [m] AFTER the obstacle leaves '
-                        'the forward window - i.e. after drawing level with it '
-                        '- before merging back. So it means the obstacle\'s '
+            description='Empty = take it from the profile. Fallback for when the lidar never sees the '
+                        'obstacle from the side at all - anything under its '
+                        '0.194 m plane. How far to keep going [m] after the '
+                        'obstacle leaves the forward window. So it means the obstacle\'s '
                         'length plus the car\'s, and it does not change when '
                         'you change trigger_distance. It is also the ONLY thing '
                         'holding the car out past an obstacle the lidar cannot '
@@ -376,5 +377,17 @@ def generate_launch_description():
             description='Empty = take it from the profile. The lane we came from must read clear for this long [s] '
                         'before we merge back. At 4 Hz of lidar this is two or '
                         'three scans, so one dropout cannot cut us back early.'),
+        DeclareLaunchArgument(
+            'lane_half_width', default_value='',
+            description='Empty = take it from the profile. Half the width [m] of the window held over the lane the '
+                        'car pulled out of. Wide enough to hold anything in the '
+                        'way of merging back, narrow enough to leave the kerb '
+                        'and the far wall out of the decision.'),
+        DeclareLaunchArgument(
+            'min_clearance', default_value='',
+            description='Empty = take it from the profile. How far the car must get off the lane it left [m] before '
+                        'it may look for a way back into it. Stops the car '
+                        'merging back while it is still in its own lane with '
+                        'the obstacle dead ahead.'),
         OpaqueFunction(function=launch_setup),
     ])

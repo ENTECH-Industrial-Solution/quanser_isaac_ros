@@ -11,6 +11,7 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import (PathJoinSubstitution, LaunchConfiguration)
 
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
 
 def generate_launch_description():
@@ -35,7 +36,7 @@ def generate_launch_description():
     use_sim_la = DeclareLaunchArgument(
             'use_sim',
             default_value='true',
-            description='Start robot in Gazebo simulation')
+            description='Use /clock from Isaac Sim instead of wall time')
 
     resolution_la = DeclareLaunchArgument(
             'resolution',
@@ -51,7 +52,7 @@ def generate_launch_description():
             package='cartographer_ros',
             executable='cartographer_node',
             output='screen',
-            parameters=[{'use_sim_time': True}],
+            parameters=[{'use_sim_time': ParameterValue(use_sim, value_type=bool)}],
             arguments=['-configuration_directory', cartographer_config_dir,
                        '-configuration_basename', configuration_basename])
 
@@ -59,7 +60,7 @@ def generate_launch_description():
             package='cartographer_ros',
             executable='cartographer_occupancy_grid_node',
             output='screen',
-            parameters=[{'use_sim_time': True}],
+            parameters=[{'use_sim_time': ParameterValue(use_sim, value_type=bool)}],
             arguments=['-resolution', resolution, '-publish_period_sec', publish_period_sec])
 
     return LaunchDescription([

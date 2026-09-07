@@ -41,6 +41,49 @@ lane_follower:
     # where to sit as a fraction of the half corridor from the LEFT edge line.
     avoid_offset_frac: 0.45
 
+    # --- what counts as a lane line -------------------------------------
+    # These belong here and NOT in the colours file: `tune:=true` rewrites that
+    # file from scratch every time you press 's', keeping only the HSV values,
+    # roi_top and band_frac. Anything else put there is silently lost.
+    #
+    # A column must be lit in this fraction of the band's rows to count, and a
+    # run must be at least this many columns wide. Together they throw away
+    # specular glints off the floor.
+    min_fill: 0.4
+    min_run_px: 3
+    # ...and no wider than this fraction of the image. A white obstacle, a wall
+    # or a patch of blown-out floor is a run hundreds of columns across, and
+    # centring on its edge steers into it. Real lines here measure ~8% of the
+    # image width.
+    max_run_frac: 0.25
+    # First guess at the half lane width, as a fraction of image width. The
+    # real value is learned online whenever both boundaries are visible, but
+    # only within half_width_tolerance of this - two runs straddling the image
+    # centre are not necessarily the two sides of a lane, and unbounded the
+    # estimate collapsed to 60 px on an 820 px image and took the whole
+    # sideways step of `avoid` with it.
+    lane_half_width_frac: 0.30
+    half_width_tolerance: 2.0
+    # Gap between the two look-ahead bands, as a fraction of the ROI height.
+    # The pair gives the lane's DIRECTION - where the boundaries converge - and
+    # a wider gap is a longer baseline and a stronger signal, up to the point
+    # where the far band lands on lines too thin to register.
+    heading_band_gap: 0.20
+    # Row of the road's vanishing point, as a fraction of image height. 0 means
+    # "the same row as roi_top", which is where it belongs: the ROI is cut just
+    # below the horizon, so the two are the same measurement of camera aim.
+    horizon_frac: 0.0
+
+    # --- watchdogs --------------------------------------------------------
+    # Stop after this long with no lane in view. A line dropping out for a
+    # frame or two is normal; braking on every dropout makes the car crawl.
+    lost_timeout: 0.5
+    # Fall back to `follow` after this long with nothing on the state topic.
+    # obstacle_avoider is optional, so silence has to mean "drive normally" -
+    # but a car parked in the oncoming lane is the worst place to stop, so a
+    # gap longer than this is treated as the avoider having died.
+    avoid_timeout: 1.0
+
 obstacle_avoider:
   ros__parameters:
     # Both sensors, one code path, everything measured in base_link via TF.
@@ -48,11 +91,34 @@ obstacle_avoider:
     # use_depth_scan:=true starts. Drop it here to silence the staleness
     # warning when the depth camera is not on the stage.
     scan_topics: ['/scan', '/scan_depth']
-    # Pull out when something is this far ahead [m]. A full 0.66 m lane change
-    # costs ~1.75 m of forward travel plus ~0.2 m of nose, so much below 2 m
-    # means full lock and passing close. Raise it now that the lidar sees the
-    # obstacles - it reaches 8 m where the depth scan stops at 3.
-    trigger_distance: 1.00
+    # Pull out when something is this far ahead [m]. THIS IS THE PARAMETER
+    # THAT DECIDES WHETHER THE MANOEUVRE IS POSSIBLE AT ALL, and it is fixed by
+    # geometry, not taste. R_min = 0.258/tan(0.50) = 0.472 m, and a 0.66 m lane
+    # change as two arcs needs:
+    #
+    #     yaw swing    forward distance   camera
+    #        25 deg          2.98 m       fine
+    #        30 deg          2.46 m       fine
+    #        40 deg          1.81 m       marginal
+    #        50 deg          1.42 m       lane leaves the frame
+    #        72 deg          0.90 m       full lock, lane long gone
+    #
+    # The CSI camera sees 97.6 deg, so +/-48.8 deg: past about 40 deg of yaw
+    # the lane centre is outside the picture and the follower reports
+    # "lane lost: no lane" in the middle of the overtake. At 1.00 m this was
+    # forced into the bottom row every time - the car swung 70 deg, lost the
+    # road, straightened up still in its own lane, and drove at the obstacle
+    # again from 0.60 m. Add ~0.2 m for the nose being ahead of base_link.
+    #
+    # 1.50 sits between the 40 and 50 deg rows: cot(theta/2) = 1.50/0.66 gives
+    # a 47 deg swing to COMPLETE the change inside that distance. The table is
+    # the conservative bound though - the car does not have to be finished
+    # changing lane by the time it arrives, only far enough across - and on the
+    # fixture the follower used 36 deg and passed 0.40 m clear. So this is the
+    # aggressive end that still works, not the comfortable one: 2.50 buys the
+    # 30 deg row outright. Below ~1.0 the camera cannot hold the lane through
+    # the swerve, whatever the rest of the tuning says.
+    trigger_distance: 1.50
     # Half width of the forward window [m]. The car body is 0.19 m wide.
     corridor_half_width: 0.22
     # Brake instead of steering when something is this close [m], measured from
@@ -61,12 +127,64 @@ obstacle_avoider:
     # How far to keep going [m] AFTER the obstacle leaves the forward window,
     # i.e. after drawing level: the obstacle's length plus the car's. Measured
     # from level rather than from the trigger, so it does not change when
-    # trigger_distance does.
-    pass_distance: 0.50
-    # The lane we came from must read clear for this long [s] before merging
-    # back. At 4 Hz of lidar this is a few scans, so one dropout cannot cut the
-    # manoeuvre short.
+    # trigger_distance does. Only reached when the lane window never held the
+    # obstacle - it is under the lidar plane - or there is no odometry to hold
+    # the window in place with at all.
+    pass_distance: 0.80
+    # --- how "have we passed it?" is MEASURED ----------------------------
+    # This is the lidar's job and nothing else can do it - the depth camera
+    # sees +/-33 deg of straight ahead and never the side.
+    #
+    # The overtake ends when the LANE THE CAR LEFT is free again. Pulling out
+    # records where the car was and which way it pointed; that is the lane's
+    # centreline, and the window rides along it beside the car - so it stays
+    # over that lane however far out the car swings.
+    #
+    # Half the lane's width [m]. Wide enough to hold anything that would be in
+    # the way of merging back, narrow enough to leave the kerb and the far wall
+    # out of it. This replaced a box fixed 0.10-0.60 m to the right of the car,
+    # which reached the obstacle only when the berth was narrow enough: a
+    # 0.20 m block given a 0.80 m berth read clear 1.18 m early, and parked
+    # beside a block that same box holds 351 lidar points with nothing
+    # overtaken at all.
+    lane_half_width: 0.35
+    # How far the window reaches along the lane, measured from the CAR [m]. It
+    # starts BEHIND, past the car's own tail (the rear axle is ~0.2 m back), so
+    # clear really means astern and not merely level with the bumper. Forward
+    # it reaches past the nose, so the car does not merge into something it is
+    # only just drawing alongside.
+    side_x_min: -0.30
+    side_x_max: 1.00
+    # The lane has to read clear for this long [s] before merging back. At 4 Hz
+    # of lidar this is a few scans, so one dropout cannot cut the manoeuvre
+    # short.
     side_clear_time: 0.80
+    # ...and the car has to have GOT OUT of that lane first [m]. The window
+    # reads clear as soon as the obstacle leaves it, and it leaves as soon as
+    # the car turns far enough - which can happen while the car is still in its
+    # own lane with the obstacle dead ahead. Measured: pulled out at 0.99 m,
+    # merged back 1.0 m later having never crossed the line, then triggered
+    # again at 0.60 m, and again. This is the middle of the manoeuvre - out,
+    # hold station, then look for a way back - and 0.40 m of a 0.66 m lane is
+    # what counts as out.
+    min_clearance: 0.40
+
+    # --- sensor handling --------------------------------------------------
+    # Points needed inside a window before it counts as occupied. An obstacle
+    # at 1 m subtends many rays on either sensor; a lone hit is noise.
+    min_hits: 3
+    # Ignore returns closer than this [m] - the lidar sees parts of the car.
+    min_range: 0.12
+    # A source silent for this long [s] is treated as dead. Every source dead
+    # holds the current state rather than falling back to `follow`: a dropout
+    # mid-overtake must not cut the car back into the obstacle.
+    scan_timeout: 1.0
+    # How often the state is published [Hz]. The follower's avoid_timeout has
+    # to be comfortably longer than one period of this.
+    rate: 10.0
+    # Where the odometry and the frame everything is measured in come from.
+    odom_topic: /odom
+    robot_frame: base_link
     # Give up and merge back after this far [m], for an obstacle the side
     # window never manages to see.
     max_avoid_distance: 8.00

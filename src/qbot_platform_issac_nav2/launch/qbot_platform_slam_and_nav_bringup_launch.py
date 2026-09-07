@@ -2,19 +2,22 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.substitutions import LaunchConfiguration
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_ros.actions import Node
 
 def generate_launch_description():
     bringup_dir = get_package_share_directory('qbot_platform_issac_nav2')
+    use_sim_time = LaunchConfiguration('use_sim_time')
     nav2_dir = get_package_share_directory('nav2_bringup')
 
     # QBot Platform Cartographer launch
     qbot_platform_cartographer_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(bringup_dir, 'launch', 'qbot_platform_cartographer_launch.py')
-        )
+        ),
+        launch_arguments={'use_sim': use_sim_time}.items()
     )
 
     # Nav2 params
@@ -26,7 +29,7 @@ def generate_launch_description():
             os.path.join(nav2_dir, 'launch', 'navigation_launch.py')
         ),
         launch_arguments={
-            'use_sim_time': 'false',
+            'use_sim_time': use_sim_time,
             'params_file': nav2_params,
             'slam': 'False',
             'localization': 'False',
@@ -45,8 +48,14 @@ def generate_launch_description():
         # ]
     )
 
+    use_sim_time_la = DeclareLaunchArgument(
+        'use_sim_time',
+        default_value='true',
+        description='Use /clock from Isaac Sim instead of wall time')
+
     # Build LaunchDescription
     ld = LaunchDescription([
+        use_sim_time_la,
         qbot_platform_cartographer_launch,
         nav2_launch,
         twist_bridge_node
