@@ -75,7 +75,7 @@ PRESETS = {
     "none": set(),
 }
 
-PRESET = os.environ.get("QCAR2_CAMERA_PRESET", "csi_front")
+PRESET = os.environ.get("QCAR2_CAMERA_PRESET", "both")
 
 
 def main():

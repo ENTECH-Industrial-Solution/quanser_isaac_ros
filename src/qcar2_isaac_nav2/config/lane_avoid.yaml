@@ -118,19 +118,19 @@ obstacle_avoider:
     # aggressive end that still works, not the comfortable one: 2.50 buys the
     # 30 deg row outright. Below ~1.0 the camera cannot hold the lane through
     # the swerve, whatever the rest of the tuning says.
-    trigger_distance: 1.50
+    trigger_distance: 1.00
     # Half width of the forward window [m]. The car body is 0.19 m wide.
     corridor_half_width: 0.22
     # Brake instead of steering when something is this close [m], measured from
     # base_link with the nose ~0.2 m further forward. 0 disables braking.
-    stop_distance: 0.25
+    stop_distance: 0.05
     # How far to keep going [m] AFTER the obstacle leaves the forward window,
     # i.e. after drawing level: the obstacle's length plus the car's. Measured
     # from level rather than from the trigger, so it does not change when
     # trigger_distance does. Only reached when the lane window never held the
     # obstacle - it is under the lidar plane - or there is no odometry to hold
     # the window in place with at all.
-    pass_distance: 0.80
+    pass_distance: 0.50
     # --- how "have we passed it?" is MEASURED ----------------------------
     # This is the lidar's job and nothing else can do it - the depth camera
     # sees +/-33 deg of straight ahead and never the side.
@@ -147,18 +147,18 @@ obstacle_avoider:
     # 0.20 m block given a 0.80 m berth read clear 1.18 m early, and parked
     # beside a block that same box holds 351 lidar points with nothing
     # overtaken at all.
-    lane_half_width: 0.35
+    lane_half_width: 0.45
     # How far the window reaches along the lane, measured from the CAR [m]. It
     # starts BEHIND, past the car's own tail (the rear axle is ~0.2 m back), so
     # clear really means astern and not merely level with the bumper. Forward
     # it reaches past the nose, so the car does not merge into something it is
     # only just drawing alongside.
-    side_x_min: -0.30
+    side_x_min: 0.6
     side_x_max: 1.00
     # The lane has to read clear for this long [s] before merging back. At 4 Hz
     # of lidar this is a few scans, so one dropout cannot cut the manoeuvre
     # short.
-    side_clear_time: 0.80
+    side_clear_time: 0.20
     # ...and the car has to have GOT OUT of that lane first [m]. The window
     # reads clear as soon as the obstacle leaves it, and it leaves as soon as
     # the car turns far enough - which can happen while the car is still in its
