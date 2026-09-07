@@ -49,6 +49,12 @@ install(DIRECTORY maps
 )
 
 
+# RViz configs referenced by the launch files
+install(DIRECTORY rviz
+  DESTINATION share/${PROJECT_NAME}/
+)
+
+
 # Install Python executables
 install(PROGRAMS
   src/twist_stamped_to_twist.py

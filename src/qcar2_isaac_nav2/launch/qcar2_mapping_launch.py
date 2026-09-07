@@ -7,8 +7,7 @@ then run scripts/save_map.sh to write maps/<name>.yaml + .pgm.
     ros2 launch qcar2_isaac_nav2 qcar2_mapping_launch.py
 
     # 2. In a second terminal, drive the car:
-    ros2 run teleop_twist_keyboard teleop_twist_keyboard \
-        --ros-args -p speed:=0.6 -p turn:=0.5 -r /cmd_vel:=/cmd_vel_twist
+    ros2 run teleop_twist_keyboard teleop_twist_keyboard /cmd_vel:=/cmd_vel_twist
 
     # 3. When the map looks complete, in a third terminal:
     ros2 run qcar2_isaac_nav2 save_map.sh qcar2_map

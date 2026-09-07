@@ -8,9 +8,9 @@ controller_server:
     odom_frame_id: "odom"
     base_frame_id: "base_link"  
     controller_frequency: 20.0
-    min_x_velocity_threshold: 0.001
-    min_y_velocity_threshold: 0.5
-    min_theta_velocity_threshold: 0.01
+    min_x_velocity_threshold: 0.2
+    min_y_velocity_threshold: 1.0
+    min_theta_velocity_threshold: 1.0
     progress_checker_plugins: ["progress_checker"] # progress_checker_plugin: "progress_checker" For Humble and older
     goal_checker_plugins: ["goal_checker"]
     controller_plugins: ["FollowPath"]

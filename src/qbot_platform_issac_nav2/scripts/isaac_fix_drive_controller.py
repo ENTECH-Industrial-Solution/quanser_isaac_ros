@@ -57,11 +57,45 @@ outputs:velocityCommand - so the only exec source available is the playback
 tick, which is what differential_controller itself already uses. Both nodes then
 tick every frame and OmniGraph pulls velocityCommand across.
 
+A second defect: the robot cannot be told to go faster
+------------------------------------------------------
+Once it drives, it saturates at ~0.155 m/s no matter what is commanded -
+teleop_twist_keyboard's speed multiplier climbs to 3.36 and nothing changes.
+
+DifferentialController converts a linear command into a wheel rate with
+`omega = v / wheelRadius`, then clamps that to maxWheelSpeed. The shipped
+numbers do not describe this robot:
+
+    wheelRadius    0.035     actual ~0.050
+    wheelDistance  0.19      actual  0.394   (wheels sit at +/-0.197 in y)
+    maxWheelSpeed  3.14151
+
+With wheelRadius 1.4x too small the computed omega is 1.4x too high, so the
+clamp binds from v = 3.14151 * 0.035 = 0.110 m/s upward. Every command above
+that produces the same clamped omega = pi, hence the same ground speed:
+pi * 0.050 = 0.157 m/s, which is what the robot measures at (0.155).
+
+The true radius is confirmed twice over - 0.155 / 3.14151 = 0.0493 from motion,
+and the wheel prims sit at z = +0.052 above the robot's ground plane.
+
+wheelDistance being half the real track width is the same class of error, and
+it halves every turn: commanding 1.0 rad/s measured 0.556 (0.19 / 0.394 = 0.48).
+Left alone it makes Nav2 under-steer every correction.
+
+maxWheelSpeed is raised to maxLinearSpeed / wheelRadius = 1.0 / 0.05 = 20 rad/s
+so that maxLinearSpeed, the parameter that is supposed to express the top speed,
+is the thing that actually limits it. What the robot then reaches is a physics
+question - the wheel drives are velocity drives with damping 0.29, which is
+weak - so measure it rather than assuming 1.0 m/s.
+
 What this script changes
 ------------------------
 1. Connects articulation_controller.inputs:execIn to on_playback_tick.outputs:tick.
-   This is the fix.
-2. Prunes input connections that name a prim which is not on the stage. The
+   This is what makes the robot move at all.
+2. Writes the measured geometry onto differential_controller: wheelRadius 0.05,
+   wheelDistance 0.394, maxWheelSpeed 20.0. Without this a command means
+   something other than what it says.
+3. Prunes input connections that name a prim which is not on the stage. The
    shipped stage has exactly one - differential_controller.inputs:angularVelocity
    keeps a second connection to a `multiply` node that was deleted without its
    wire being cleaned up, leaving a malformed input holding two connections. That
@@ -88,6 +122,15 @@ import omni.usd
 from pxr import Sdf, Usd
 
 ROS2_NODES = "ros2_nodes"
+
+# Measured from the stage: wheels at +/-0.197 in y, wheel centres 0.052 above
+# the ground plane. maxWheelSpeed is derived so the clamp never binds before
+# the declared maxLinearSpeed (1.0 m/s) does.
+GEOMETRY = {
+    "wheelRadius": 0.05,
+    "wheelDistance": 0.394,
+    "maxWheelSpeed": 20.0,
+}
 DRIVE_GRAPH = "ros_qbot_platform_drive_controller"
 
 
@@ -135,6 +178,30 @@ def connect_exec(graph):
     return True
 
 
+def calibrate(graph):
+    """Replace the differential controller's guessed geometry with the measured.
+
+    Returns the number of values changed.
+    """
+    ctrl = graph.GetChild("differential_controller")
+    if not ctrl.IsValid():
+        raise RuntimeError(f"No differential_controller under {graph.GetPath()}")
+
+    changed = 0
+    for key, want in GEOMETRY.items():
+        attr = ctrl.GetAttribute(f"inputs:{key}")
+        if not attr:
+            raise RuntimeError(f"differential_controller has no inputs:{key}")
+        have = attr.Get()
+        if have is not None and abs(have - want) < 1e-6:
+            print(f"[qbot] {key:<14} already {want}")
+            continue
+        attr.Set(want)
+        print(f"[qbot] {key:<14} {have} -> {want}")
+        changed += 1
+    return changed
+
+
 def prune_dangling(stage, scope):
     """Rewrite every input whose connections name a prim that is not on the stage.
 
@@ -178,6 +245,7 @@ def main():
         raise RuntimeError(f"No '{DRIVE_GRAPH}' graph under {scope.GetPath()}")
 
     wired = connect_exec(graph)
+    tuned = calibrate(graph)
     repaired, orphaned = prune_dangling(stage, scope)
 
     if not repaired and not orphaned:
@@ -185,8 +253,8 @@ def main():
     else:
         print(f"[qbot] {repaired} attribute(s) repaired, {orphaned} left alone")
 
-    if wired:
-        print("[qbot] DRIVE PATH RESTORED - now: File > Save, REOPEN the stage, PLAY")
+    if wired or tuned:
+        print("[qbot] now: File > Save, REOPEN the stage, PLAY")
     else:
         print("[qbot] nothing to change (already applied)")
 

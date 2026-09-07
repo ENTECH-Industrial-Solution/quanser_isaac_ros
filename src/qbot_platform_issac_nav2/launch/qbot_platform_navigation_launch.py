@@ -27,12 +27,29 @@ from launch.actions import (
     DeclareLaunchArgument,
     IncludeLaunchDescription,
     OpaqueFunction,
+    TimerAction,
 )
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from nav2_common.launch import RewrittenYaml
+
+# Navigation must not start configuring until AMCL is actually broadcasting
+# map -> odom.  nav2_costmap_2d gives up on that transform after a short
+# timeout and reports it as a hard activation failure:
+#
+#   global_costmap: Invalid frame ID "base_link" ... frame does not exist
+#   Failed to activate global_costmap because transform from base_link to map
+#   did not become available before timeout
+#   lifecycle_manager_navigation: Failed to bring up all requested nodes
+#
+# which leaves localization up, the map served, TF complete moments later, and
+# every goal rejected - a failure that looks like a frame or a map problem
+# rather than a race.  Isaac Sim runs this scene at roughly half real time and
+# publishes /scan at ~7 Hz, so AMCL needs several wall seconds to see its first
+# scan and start broadcasting.
+NAVIGATION_START_DELAY_S = 10.0
 
 
 def launch_setup(context, *args, **kwargs):
@@ -85,14 +102,17 @@ def launch_setup(context, *args, **kwargs):
         }.items(),
     )
 
-    navigation_launch = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(nav2_share, 'launch', 'navigation_launch.py')),
-        launch_arguments={
-            'use_sim_time': use_sim_time,
-            'params_file': configured_params,
-            'autostart': autostart,
-        }.items(),
+    navigation_launch = TimerAction(
+        period=NAVIGATION_START_DELAY_S,
+        actions=[IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(
+                os.path.join(nav2_share, 'launch', 'navigation_launch.py')),
+            launch_arguments={
+                'use_sim_time': use_sim_time,
+                'params_file': configured_params,
+                'autostart': autostart,
+            }.items(),
+        )],
     )
 
     # Nav2 publishes TwistStamped on /cmd_vel_nav (enable_stamped_cmd_vel:
@@ -115,7 +135,7 @@ def launch_setup(context, *args, **kwargs):
         condition=IfCondition(use_rviz),
         parameters=[{'use_sim_time': use_sim_time}],
         arguments=['-d', os.path.join(pkg_share, 'rviz',
-                                      'qbot_platform_nav2.rviz')],
+                                      '/home/earth157/entech_quanser_ros2_ws/src/qbot_platform_issac_nav2/rviz/qbot_platform.rviz')],
     )
 
     return [localization_launch, navigation_launch, twist_bridge_node, rviz_node]

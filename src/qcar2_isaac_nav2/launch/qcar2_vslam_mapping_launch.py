@@ -11,8 +11,7 @@ on /map, which the costmaps consume unchanged.
     ros2 launch qcar2_isaac_nav2 qcar2_vslam_mapping_launch.py
 
     # 2. Drive the car slowly around the whole area:
-    ros2 run teleop_twist_keyboard teleop_twist_keyboard \
-        --ros-args -r cmd_vel:=/cmd_vel_twist -p speed:=0.3 -p turn:=0.3
+    ros2 run teleop_twist_keyboard teleop_twist_keyboard /cmd_vel:=/cmd_vel_twist
 
     # 3. With this still running, save the result:
     ros2 run qcar2_isaac_nav2 save_vslam_map.sh qcar2_vslam_map

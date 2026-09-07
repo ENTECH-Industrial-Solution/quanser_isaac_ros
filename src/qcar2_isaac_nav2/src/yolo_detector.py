@@ -49,6 +49,7 @@ you skip.
 """
 
 import os
+import sys
 import threading
 
 import numpy as np
@@ -229,6 +230,25 @@ class YoloDetector(Node):
         # several seconds, and doing it inside __init__ means the failure is
         # reported by a live node with a real logger instead of an import
         # traceback before rclpy is even up.
+        #
+        # torch is not a pip package on this machine - ultralytics lives in
+        # ~/.local without it, so `from ultralytics import YOLO` raises
+        # ModuleNotFoundError: No module named 'torch'. The only build present
+        # is the one Isaac Sim ships, 2.10.0+cu128, whose arch list includes
+        # the sm_120 this laptop's Blackwell GPU needs; reusing it costs
+        # nothing, where a pip install is ~3 GB of duplicate CUDA wheels and
+        # must come from the cu128 index to support sm_120 at all.
+        # setup_python_env.sh does not export the ML prebundle (it lists
+        # kit/python and the ext pip_prebundles, not target-deps), so it has
+        # to be added by hand. APPENDED, never
+        # prepended, so it cannot shadow a system package - the prebundle ships
+        # no NumPy, and keeping the system's 1.x first is what the cv_bridge
+        # note above depends on.
+        torch_path = os.path.expanduser(
+            "~/isaacsim/_build/target-deps/isaac_ml_prebundle")
+        if os.path.isdir(torch_path) and torch_path not in sys.path:
+            sys.path.append(torch_path)
+
         from ultralytics import YOLO
         import torch
 

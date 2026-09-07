@@ -198,7 +198,16 @@ def launch_setup(context, *args, **kwargs):
                           'range_max': '3.0',
                           'scan_height': LaunchConfiguration('scan_height')}.items(),
     )
-    return [follower, avoider, depth_scan]
+
+    rviz_node = Node(
+            package='rviz2',
+            executable='rviz2',
+            name='rviz2',
+            output='screen',
+            arguments=['-d', os.path.join(pkg_share, 'rviz', 'qcar2_lane_avoid.rviz')],
+        )
+    
+    return [follower, avoider, depth_scan, rviz_node]
 
 
 def generate_launch_description():
