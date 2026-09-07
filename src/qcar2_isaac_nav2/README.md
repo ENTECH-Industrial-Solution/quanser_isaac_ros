@@ -1,85 +1,400 @@
 # qcar2_isaac_nav2
 
-นำทางอัตโนมัติสำหรับ Quanser QCar2 ใน NVIDIA Isaac Sim บน ROS 2 Jazzy
-แบ่งเป็น 2 เฟส: **เก็บแมพ** แล้วค่อย **นำทาง**
+<a id="overview"></a>
+## 1. ภาพรวม
 
-มี 2 เส้นทางให้เลือก ต่างกันแค่ **ครึ่งที่เป็นเซนเซอร์** ครึ่งที่เป็น Nav2 (planner,
-controller, BT, bridge) ใช้ร่วมกันทั้งคู่:
+ROS 2 Jazzy package (`ament_cmake`) สำหรับขับ **Quanser QCar2** (รถ Ackermann) ใน
+**NVIDIA Isaac Sim** ด้วย **Nav2 1.3.12** — รวม 5 ความสามารถที่แยกกันเป็นอิสระ:
+
+| # | เรื่อง | ใช้เซนเซอร์ | launch |
+|---|---|---|---|
+| 1 | [SLAM (lidar)](#slam) | lidar + odom | `qcar2_mapping_launch.py` → `qcar2_navigation_launch.py` |
+| 2 | [V-SLAM (กล้อง)](#vslam) | RGB-D | `qcar2_vslam_mapping_launch.py` → `qcar2_vslam_navigation_launch.py` |
+| 3 | [CSI 360° + YOLO](#csi) | CSI 4 ตัว | `qcar2_yolo_launch.py` |
+| 4 | [ขับตามเลน](#lane) | CSI หน้า | `qcar2_lane_follow_launch.py` |
+| 5 | [หลบสิ่งกีดขวาง](#obstacle) | lidar + depth | (มากับข้อ 4) / depth เข้า costmap ของข้อ 1–2 |
+
+ข้อ 1–2 ใช้ Nav2 (มีแมพ มี goal pose) ครึ่ง Nav2 ใช้ร่วมกันทั้งคู่ ต่างกันแค่ครึ่งเซนเซอร์
+ข้อ 3–4 **ไม่ใช้ Nav2 เลย** และข้อ 4 ห้ามรันพร้อม Nav2
+
+### เส้นทางของคำสั่งขับ
 
 ```
-เส้นทาง LIDAR (ค่าตั้งต้น)
-เฟส 1  MAPPING       Cartographer SLAM  ->  ขับเก็บแมพ  ->  save เป็น .yaml/.pgm
-เฟส 2  NAVIGATION    map_server + AMCL  ->  Nav2        ->  กด 2D Goal Pose
-
-เส้นทาง CAMERA (V-SLAM, ไม่ใช้ lidar เลย)
-เฟส 1  MAPPING       RTAB-Map RGB-D     ->  ขับเก็บแมพ  ->  .db + .yaml/.pgm
-เฟส 2  NAVIGATION    map_server + RTAB-Map localization  ->  Nav2
+Isaac Sim ──/clock /scan /imu /odom, TF odom->base_link──> Nav2
+Nav2 controller_server ──/cmd_vel_nav (TwistStamped, yaw rate rad/s)──┐
+                                                                      ▼
+                                              src/twist_stamped_to_twist.py
+                                                                      │
+Isaac Sim QCar2 drive graph <──/cmd_vel_twist (Twist, มุมเลี้ยว rad)──┘
 ```
 
-Isaac Sim เป็นคนส่ง `/clock`, `/scan`, `/imu`, `/odom` และ TF `odom -> base_link -> {lidar, imu, ...}`
-เสมอ ทั้งสองเส้นทาง **ไม่มีใครแตะ `odom -> base_link`** ต่างกันแค่ว่าใคร publish `map -> odom`:
-เฟส 1 lidar ได้จาก Cartographer, เฟส 2 lidar ได้จาก AMCL,
-ส่วนเส้นทางกล้องได้จาก RTAB-Map ทั้งสองเฟส
+`twist_stamped_to_twist.py` ไม่ใช่แค่แปลงชนิดข้อความ แต่ **แปลงหน่วย**: Nav2 ส่ง yaw rate
+ส่วน Isaac อ่านเป็นมุมเลี้ยวล้อหน้า จึงใช้ `δ = atan(ω·L/v)`, `L = 0.258 m`
+ถอดตัวนี้ออกเมื่อไร รถจะเลี้ยวแรงเกินคำสั่งหลายเท่าแล้ว **วิ่งวน** ทั้งที่ log ทุกบรรทัดดูปกติ
+
+Isaac Sim เป็นเจ้าของ `odom -> base_link` เสมอ ต่างกันแค่ใคร publish `map -> odom`
+(Cartographer / AMCL / RTAB-Map)
+
+### Build
+
+```bash
+cd ~/entech_quanser_ros2_ws
+source /opt/ros/jazzy/setup.bash
+colcon build --packages-select qcar2_isaac_nav2
+source install/setup.bash
+```
+
+`config/ launch/ rviz/ behavior_trees/ maps/` ถูก install ผ่าน CMake —
+**แก้ YAML/lua/launch/rviz/map แล้วต้อง `colcon build` ใหม่เสมอ** ไม่งั้นไม่มีผล (กับดักคลาสสิกของ workspace นี้)
+
+### กฎเหล็ก
+
+- กด **PLAY** ใน Isaac Sim ก่อน launch เสมอ และ **ห้ามกด Stop/Play ระหว่างที่ ROS รันอยู่** —
+  `/clock` รีเซ็ตเป็น 0, Cartographer ตาย, `map -> odom` หาย, goal fail ใน ~13 ms
+- **ห้ามเปิดสอง stack ซ้อนกัน** — `ros2 node list | sort | uniq -d` ต้องว่าง
+- `enable_stamped_cmd_vel: true` ต้องมีทุกโหนดของ Nav2 ที่แตะ cmd_vel (Jazzy default เป็น `false`)
+  ไม่งั้น Nav2 วางแผนสวยแต่รถไม่ขยับ — เช็ค `ros2 topic info -v /cmd_vel_nav` ต้องมีชนิดเดียว
+- ต้อง override behavior tree **ทั้งสองไฟล์** (`navigate_to_pose` + `navigate_through_poses`)
+  เพราะรถ Ackermann หมุนอยู่กับที่ไม่ได้ จึงตัด `Spin` ออก
+- **ห้ามใส่ list ว่างใน YAML** (`polygons: []` ฯลฯ) — โหนดจะ abort ตอนสตาร์ต ใช้ค่าจริง + `enabled: False` แทน
 
 ---
 
-## สารบัญ
+<a id="tree"></a>
+## 2. โครงสร้างไฟล์
 
-- [กฎเหล็ก](#-1)
-- [วิธีรัน](#-2)
-  - [เฟส 1 — เก็บแมพ](#-3)
-  - [เฟส 2 — นำทาง](#-7)
-- [เส้นทางกล้อง — V-SLAM ด้วย RGB-D (ไม่ใช้ lidar)](#-9)
-  - [ขั้นที่ 0 — ฝั่ง Isaac Sim (ทำครั้งเดียว ตอน หยุด sim)](#-10)
-  - [เฟส 1 — เก็บแมพด้วยกล้อง](#-12)
-  - [เฟส 2 — นำทางด้วยกล้อง](#-16)
-  - [กับดักที่เจอมาแล้ว](#-17)
-  - [ทำไม odometry ยังมาจาก Isaac ไม่ใช่ `rgbd_odometry`](#-18)
-- [(ทางเลือก) ใช้ depth camera ช่วยหลบสิ่งกีดขวาง](#-19)
-  - [ขั้นที่ 1 — ฝั่ง Isaac Sim (ทำครั้งเดียว ตอน หยุด sim)](#-20)
-  - [ขั้นที่ 2 — ฝั่ง ROS](#-21)
-  - [ทำไมต้องมี frame `depth_scan_link`](#-22)
-  - [ข้อจำกัดที่ต้องรู้](#-23)
-- [กล้อง CSI 360 องศา + YOLO object detection](#-24)
-  - [ขั้นที่ 0 — ติดตั้ง ultralytics (ทำครั้งเดียว)](#-25)
-  - [ขั้นที่ 1 — ฝั่ง Isaac Sim (ทำครั้งเดียว ตอน หยุด sim)](#-26)
-  - [ขั้นที่ 2 — เลือกว่าจะให้กล้องตัวไหน render](#-27)
-  - [ขั้นที่ 3 — รัน](#-28)
-  - [ทำไมต้องมี /csi/mosaic](#-29)
-  - [อาร์กิวเมนต์](#-30)
-  - [กับดักที่เจอมาแล้ว](#-31)
-- [ขับตามเลนด้วยกล้อง (lane following)](#-33)
-  - [ขั้นที่ 0 — ฝั่ง Isaac Sim (ทำครั้งเดียว ตอน หยุด sim)](#-34)
-  - [ขั้นที่ 1 — ปรับสีก่อนขับ](#-35)
-  - [ขั้นที่ 2 — ขับ](#-36)
-  - [profile — ค่าที่จูนแล้วอยู่ในไฟล์ ไม่ต้องพิมพ์ซ้ำ](#-38)
-  - [อาร์กิวเมนต์](#-39)
-- [หลบสิ่งกีดขวางระหว่างขับตามเลน](#-40)
-  - [สองเซนเซอร์ ทางเดินเดียว](#-41)
-  - [สองกรอบที่ใช้ตัดสินใจ](#-42)
-  - [ออกง่าย กลับยาก](#-43)
-  - [ฝั่งตัวขับ: ทำไมไม่ต้องจับเวลาเลย](#-44)
-  - [ที่มาของ `trigger_distance` 2.5](#-45)
-  - [สองระนาบ สองความสูง — ตัวที่ตัดสินว่าเห็นของเตี้ยไหม](#-46)
-  - [เงียบ ≠ ปลอดภัย](#≠)
-  - [ดูว่ามันคิดอะไรอยู่](#-47)
-  - [กับดักที่เจอมาแล้ว](#-48)
-- [โครงสร้างไฟล์](#-49)
-- [แต่ละไฟล์ทำอะไร](#-50)
-- [ทำไมค่าถึงตั้งแบบนี้](#-51)
-- [แก้ปัญหา](#-52)
+```
+src/qcar2_isaac_nav2/
+├── launch/
+│   ├── qcar2_mapping_launch.py               [1] เก็บแมพด้วย Cartographer
+│   ├── qcar2_navigation_launch.py            [1] map_server + AMCL + Nav2
+│   ├── qcar2_vslam_mapping_launch.py         [2] เก็บแมพด้วย RTAB-Map RGB-D
+│   ├── qcar2_vslam_navigation_launch.py      [2] RTAB-Map localization + Nav2
+│   ├── qcar2_yolo_launch.py                  [3] YOLO บนกล้อง CSI
+│   ├── qcar2_lane_follow_launch.py           [4][5] ขับตามเลน + หลบ (จูนสี/ขับ)
+│   ├── depth_scan_launch.py                  [5] depth -> /scan_depth (ใช้ร่วม 3 เส้นทาง)
+│   ├── qcar2_cartographer_launch.py          (legacy) cartographer อย่างเดียว
+│   └── qcar2_slam_and_nav_bringup_launch.py  (legacy) SLAM+Nav2 พร้อมกัน ไม่ใช้แมพเซฟ
+├── config/
+│   ├── qcar2_mapping.lua                     [1] จูน Cartographer (กิน /odom ด้วย)
+│   ├── qcar2_nav2_amcl.yaml                  [1] Nav2 + AMCL ครบชุด
+│   ├── qcar2_nav2_vslam.yaml                 [2] ก๊อปจากไฟล์บน ตัด /scan ใช้ VoxelLayer
+│   ├── lane_avoid.yaml                       [4][5] profile ค่าขับ + ค่าหลบ
+│   ├── lane_colors.yaml                      [4] ค่า HSV ตั้งต้น
+│   └── qcar2_2d.lua / qcar2_slam_and_nav.yaml  (legacy)
+├── behavior_trees/
+│   ├── navigate_to_pose_ackermann.xml        ตัด Spin ใช้ BackUp แทน
+│   └── navigate_through_poses_ackermann.xml  ต้องแก้คู่กัน ไม่งั้น bt_navigator activate ไม่ผ่าน
+├── src/
+│   ├── twist_stamped_to_twist.py             bridge Nav2 -> Isaac (แปลงหน่วยมุมเลี้ยว)
+│   ├── yolo_detector.py                      [3] YOLO 4 กล้อง + mosaic (ไม่ใช้ cv_bridge)
+│   ├── lane_follower.py                      [4] หาเลน + ขับ + โหมดจูนสี (ไฟล์เดียว 2 โหมด)
+│   └── obstacle_avoider.py                   [5] ตัดสินใจ -> /lane/avoid (ไม่แตะ cmd_vel)
+├── scripts/
+│   ├── isaac_add_rgbd_camera.py              [2] กล้อง RGB-D registered ตัวเดียว
+│   ├── isaac_add_depth_camera.py             [5] กล้อง depth + graph (asset มีแต่ Xform เปล่า)
+│   ├── isaac_add_csi_cameras.py              [3] เปิด active ของ CSI 3 ตัว + normalize ทั้ง 4
+│   ├── isaac_camera_streams.py               preset เลือกว่า render กล้องตัวไหน (= งบ GPU)
+│   ├── isaac_apply_and_save.py               รันสคริปต์ข้างบนแบบ headless แล้วเซฟ stage
+│   ├── isaac_sim_control.py                  play/stop/reset/วางรถ ผ่าน /tmp/qcar2_sim_cmd.json
+│   ├── save_map.sh                           [1] เซฟ .pgm/.yaml/.pbstream
+│   └── save_vslam_map.sh                     [2] เซฟ .pgm/.yaml จาก /map ของ RTAB-Map
+├── rviz/
+│   ├── qcar2_mapping.rviz / qcar2_nav2.rviz              [1]
+│   ├── qcar2_vslam.rviz / qcar2_vslam_nav.rviz           [2]
+│   ├── qcar2_yolo.rviz                                   [3] mosaic + detections
+│   ├── qcar2_lane_avoid.rviz                             [4][5] debug image + scan
+│   ├── qcar2_depth_view.rviz                             ดู depth ดิบ
+│   └── qcar2.rviz                                        รวมทุก display เปิดเอง
+├── maps/
+│   ├── qcar2_map.yaml/.pgm/.pbstream          [1] แมพ lidar + เซสชัน Cartographer
+│   ├── qcar2_vslam_map.yaml/.pgm              [2] ภาพฉาย 2 มิติของแมพกล้อง
+│   └── qcar2_vslam_cloud_cloud.ply            [2] cloud 3 มิติที่ export ไว้
+├── CMakeLists.txt / package.xml               build + dependencies
+├── setup.py / setup.cfg / rt_models/          (legacy) ไม่ได้ใช้
+└── README.md
+```
+
+ไฟล์ที่ **ไม่อยู่ใน repo แต่ขาดไม่ได้**:
+`~/.ros/qcar2_vslam.db` (pose graph ของ V-SLAM) และ `~/.ros/qcar2_lane_colors.yaml` (สีเลนที่จูนแล้ว)
 
 ---
 
-## กฎเหล็ก
+<a id="toc"></a>
+## 3. สารบัญ
 
-**กด PLAY ใน Isaac Sim ก่อนสั่ง launch เสมอ และห้ามกด Stop/Play ระหว่างที่ ROS รันอยู่**
-เพราะ `/clock` จะรีเซ็ตเป็น 0 แล้ว Cartographer ตายทันที ทำให้ `map -> odom` หาย
-และทุก goal จะ fail ใน ~13 ms
+- [1. ภาพรวม](#overview) · [เส้นทางของคำสั่งขับ](#overview) · [Build](#overview) · [กฎเหล็ก](#overview)
+- [2. โครงสร้างไฟล์](#tree)
+- [3. สารบัญ](#toc)
+- [4. เจาะลึกแต่ละเรื่อง](#deep)
+  - [4.1 SLAM — เก็บแมพและนำทางด้วย lidar](#slam)
+  - [4.2 V-SLAM — เก็บแมพและนำทางด้วยกล้อง RGB-D](#vslam)
+  - [4.3 CSI 360° + YOLO](#csi)
+  - [4.4 Lane following — ขับตามเลนด้วยกล้อง](#lane)
+  - [4.5 Obstacle detection — หลบสิ่งกีดขวาง](#obstacle)
+- [5. แก้ปัญหา](#trouble)
 
-**ห้ามเปิดสอง stack ซ้อนกัน** — เช็คด้วย `ros2 node list | sort | uniq -d` ต้องไม่มีอะไรออกมา
+---
 
-ถ้าต้อง restart:
+<a id="deep"></a>
+## 4. เจาะลึกแต่ละเรื่อง
+
+<a id="slam"></a>
+### 4.1 SLAM — เก็บแมพและนำทางด้วย lidar
+
+2 เฟส: Cartographer สร้างแมพ → เซฟ → `map_server` + AMCL นำทางบนแมพนั้น
+
+```bash
+# เฟส 1 — เก็บแมพ (terminal 1)
+ros2 launch qcar2_isaac_nav2 qcar2_mapping_launch.py
+# (terminal 2) ขับช้า ๆ — /scan ของ Isaac ออกแค่ ~4 Hz
+ros2 run teleop_twist_keyboard teleop_twist_keyboard \
+    --ros-args -p speed:=0.6 -p turn:=0.5 -r /cmd_vel:=/cmd_vel_twist
+# (terminal 3) เซฟแล้ว build ให้ install เห็น
+ros2 run qcar2_isaac_nav2 save_map.sh qcar2_map && colcon build --packages-select qcar2_isaac_nav2
+
+# เฟส 2 — นำทาง
+ros2 launch qcar2_isaac_nav2 qcar2_navigation_launch.py    # map:=/abs/path.yaml ได้
+```
+
+รอ `Managed nodes are active` **ครบ 2 ตัว** แล้วใน RViz กด 2D Pose Estimate (ถ้ารถไม่ได้อยู่จุดเดิม)
+ตามด้วย 2D Goal Pose · ต้องขับเก็บแมพให้ครบทุกทาง เพราะ `allow_unknown: false`
+
+**ค่าที่วัดมา ไม่ได้เดา** — จาก TF: wheelbase 0.258 m, ตัวถัง ~0.39 × 0.19 m
+→ `footprint [[0.21,0.10],[0.21,-0.10],[-0.19,-0.10],[-0.19,0.10]]`, `minimum_turning_radius 0.5`
+(ต้องตรงกับ `wheelbase` ใน bridge เสมอ)
+
+| ค่า | ทำไม |
+|---|---|
+| `motion_model_for_search: REEDS_SHEPP` | Dubins เดินหน้าอย่างเดียว เป้าหมายข้างหลังจะวนหลายเมตร · คู่กับ `PreferForwardCritic 1.5` (5.0 จะบล็อกช่วงถอยจนรถนิ่ง) |
+| `yaw_goal_tolerance: 3.15` | ไม่สนทิศตอนจอด รถหมุนอยู่กับที่ไม่ได้ ถ้าบังคับมุมจะวนรอบเป้าไม่จบ |
+| `CostCritic consider_footprint: true` | ถ้า false เช็คชนเป็นวงกลม r=0.10 ทั้งที่รถยาว 0.40 → เฉี่ยวกำแพงแล้วค้าง (ลด `batch_size` เป็น 1000 ชดเชย) |
+| `inflation_radius: 0.30` | 0.75 ทำให้ประตูทุกบานดูวิ่งผ่านไม่ได้ |
+| `local_costmap` frame `odom` ไม่มี static layer | ถ้าใช้ `map` costmap จะกระตุกทุกครั้งที่ AMCL แก้ตำแหน่ง |
+
+**path ของแมพถูกยัดเข้า params ใน `OpaqueFunction`** ไม่ได้ส่งผ่าน `map:=` ของ nav2
+เพราะ argument นั้นมาเป็น params file scope `/**:` และ ROS 2 ให้ key `map_server:` ชนะ wildcard เสมอ
+→ `yaml_filename` ว่างชนะ แล้ว map_server ขึ้นมาแบบไม่มีแมพ
+
+ผลวัดจริง goal เดียวกันก่อน/หลังจูน: 9.07 m / 297° / timeout → **1.84 m / 65° / SUCCEEDED 13 s**
+(ระยะเส้นตรง 1.92 m) — เกณฑ์สุขภาพคือ ระยะที่วิ่ง ÷ ระยะเส้นตรง ~0.9–1.3 และมุมรวม < ~80°
+
+---
+
+<a id="vslam"></a>
+### 4.2 V-SLAM — เก็บแมพและนำทางด้วยกล้อง RGB-D
+
+RTAB-Map ทำ RGB-D SLAM แทน lidar: ดึง feature จากภาพสี ปิด loop จากหน้าตาสถานที่ สะสม depth
+เป็น voxel map 3 มิติ แล้วฉายลงเป็น occupancy grid ปกติให้ costmap กินต่อ
+ครึ่ง Nav2 เหมือนข้อ 4.1 ทุกอย่าง — `qcar2_nav2_vslam.yaml` คือไฟล์เดิมที่ตัด `/scan` ทิ้ง
+และเปลี่ยน obstacle layer เป็น VoxelLayer ที่กิน point cloud **จูน planner/controller เมื่อไรต้องแก้ให้ตรงกันทั้งสองไฟล์**
+
+**ขั้นที่ 0 (ครั้งเดียว ตอนหยุด sim)** — paste `scripts/isaac_add_rgbd_camera.py` ลง Script Editor
+สร้าง Camera ใต้ `realsenseRGB` ให้ **render product ตัวเดียว** ป้อนทั้งสี/depth/camera_info
+→ stamp ตรงกัน จึงใช้ `approx_sync: false` ได้
+(`/realsense_depth` เดิมของ asset ห่างจากเลนส์สี 37 มม. = เพี้ยน ~18 px ที่ 1 ม. **ใช้กับ RGB-D SLAM ไม่ได้**)
+
+```bash
+# เฟส 1 — เก็บแมพ
+ros2 launch qcar2_isaac_nav2 qcar2_vslam_mapping_launch.py     # ขับช้า ๆ ให้ครบทุกทาง
+ros2 run qcar2_isaac_nav2 save_vslam_map.sh qcar2_vslam_map    # เซฟตอน launch ยังรันอยู่
+colcon build --packages-select qcar2_isaac_nav2                # แล้วค่อย Ctrl-C ปิด db ให้เรียบร้อย
+
+# เฟส 2 — นำทาง
+ros2 launch qcar2_isaac_nav2 qcar2_vslam_navigation_launch.py
+```
+
+ได้ **2 ชิ้น ต้องเก็บทั้งคู่**: `~/.ros/qcar2_vslam.db` (pose graph + visual words สำหรับ relocalise)
+และ `maps/qcar2_vslam_map.yaml/.pgm` (static layer ของ costmap)
+ที่ต้องมี `.pgm` เพราะให้ RTAB-Map เสิร์ฟ `/map` เอง = อุ้ม grid ของทุก node ไว้ใน working memory
+→ 6 GB จน OOM killer ลาก Isaac Sim ไปด้วย
+
+| argument | default | ความหมาย |
+|---|---|---|
+| `start_at_origin` | `true` | เชื่อว่ารถเริ่มที่จุดกำเนิดแมพ ไม่ต้อง relocalise (จริงใน Isaac เพราะ respawn ที่เดิม, ~0.7 GB) · `false` = ให้หาตัวเองจากกล้องจริง ~2.7 GB, ~0.6 s/เฟรม |
+| `database_path` | `~/.ros/qcar2_vslam.db` | ฐานข้อมูลจากเฟส 1 |
+| `use_depth_scan` | `true` | ป้อน `/scan_depth` เข้า local costmap เพิ่ม |
+
+**กับดักที่เงียบสนิท**
+
+- `RGBD/MaxOdomCacheSize: 1` — default 10 รอ localization ที่ตรงกันหลายครั้ง แต่รถ**จอดนิ่ง**
+  ไม่ผลิต pose ใหม่ cache ไม่มีวันเต็ม → `map -> odom` ไม่เคยออก ทุก goal fail ว่า `map does not exist`
+  โดยไม่มีบรรทัดไหนเป็น error
+- `Mem/InitWMWithAllNodes` ต้องผูกกับ `start_at_origin` (working memory ว่าง + ไม่บอกตำแหน่ง = ไม่ publish ตลอดกาล)
+- เปิดแมพเดิมแล้วเห็นนิดเดียว = ปกติ ยังไม่ relocalise ไม่ใช่แมพหาย
+- **อย่าเรียก `/rtabmap/backup`** มันคือ save + copy + **re-init working memory** แล้วแมพจะยุบเหลือเท่าที่เห็น
+- `Not enough inliers 0/15` → ไปดู**ภาพสี**ก่อน มักเป็น exposure พังจนขาวโพลน ไม่ใช่พารามิเตอร์ SLAM
+- depth ของ Isaac เป็น 32FC1 ต้องตั้ง `Mem/DepthCompressionFormat=.png`
+- odometry ยังมาจาก Isaac ไม่ใช่ `rgbd_odometry` เพราะตัวหลังจะ publish `odom -> base_link` ตัวที่สองมาแย่งกัน
+
+---
+
+<a id="csi"></a>
+### 4.3 CSI 360° + YOLO
+
+กล้อง CSI 4 ตัวรอบคัน ตัวละ 97.6° รวม 390° รัน YOLO ตัวเดียวร่วมกัน
+**เป็น sensing ล้วน ๆ ไม่แตะ TF / costmap / cmd_vel** จึงเปิดปิดทับ stack ที่รันอยู่ได้
+
+```
+csi_front/back/left/right ──> yolo_detector ──> /csi_<pos>/detections  (Detection2DArray)
+                                             ├─> /csi_<pos>/annotated
+                                             └─> /csi/mosaic  (2x2 — RViz ไม่มี grid layout)
+```
+
+```bash
+pip install --user --break-system-packages ultralytics   # ครั้งเดียว (weights ลง ~/.cache/qcar2_yolo/)
+# ครั้งเดียว ตอนหยุด sim: paste scripts/isaac_add_csi_cameras.py ลง Script Editor
+QCAR2_CAMERA_PRESET=csi python3 scripts/isaac_camera_streams.py
+ros2 launch qcar2_isaac_nav2 qcar2_yolo_launch.py         # cameras:= model:= confidence:= imgsz:=
+```
+
+**asset มี graph ครบทั้ง 4 ตัวอยู่แล้ว ต่อสายถูกหมด** แค่ 3 ตัวถูกปิดด้วย `active = False`
+prim ที่ปิดจะ "หายไป" ทั้งดุ้น (ลูกไม่ถูก compose, traverse ไม่เจอ) มันดูเหมือน**ไม่มีอยู่จริง**
+ถ้าเชื่อแล้วไปสร้าง graph ใหม่ = สร้างซ้อนบนของที่มีอยู่ใน `qcar2.usd`
+สคริปต์จึงแค่เปิดสวิตช์ + ตั้ง `topicName`, `frameSkipCount=5` (~10 Hz), `enabled` ของ render product
+เป็น USD attribute ล้วน ๆ และ `active` เขียนเป็น override บน root layer — `qcar2.usd` ไม่เคยถูกแตะ
+
+**render product คืองบ GPU และ `frameSkipCount` ไม่ช่วย** — RTX render ทุกเฟรมไม่ว่ามีคน subscribe หรือไม่
+ทางเดียวที่ได้ GPU คืนคือปิด render product `isaac_camera_streams.py` จึงเป็น preset:
+
+| preset | เปิด | ใช้ตอน |
+|---|---|---|
+| `vslam` | RGB-D (1) | เส้นทาง V-SLAM |
+| `csi` | CSI 4 ตัว (4) | YOLO 360° |
+| `csi_front` | CSI หน้า (1) | YOLO คู่กับ V-SLAM (`cameras:=front`) |
+| `lane_avoid` | CSI หน้า + depth (2) | ขับตามเลน + หลบ |
+| `both` / `none` | 5 / 0 | ครบทุกอย่าง / lidar อย่างเดียว |
+
+4 กล้องพร้อมกันเคยทำให้คู่ RGB-D เหลือ **1.6 Hz** — CSI ครบวงกับ V-SLAM ไม่ได้ตั้งใจให้รันพร้อมกัน
+วัดได้ 4 กล้อง × ~9.5 Hz, drop 0% บน yolo11n fp16 (แต่วัดตอน sim หยุด = เพดานบน)
+
+**กับดัก**
+
+- **ห้ามใช้ `cv_bridge`** — Jazzy build มากับ NumPy 1.x แต่ `~/.bashrc` ดัน NumPy 2.5.2 ของ Isaac ขึ้นหน้า
+  แปลงภาพทีเดียว **segfault (139)** ไม่มี traceback เหมือน driver พังมากกว่า dependency ชน
+  `yolo_detector.py` จึงแปลงเองด้วย NumPy (`decode_rgb`/`encode_rgb`) — **อย่าแก้กลับ**
+- ภาพขาวโพลน = Isaac เขียน `omni:rtx:autoExposure:enabled = False` ลงกล้องที่มี render product
+  (สคริปต์บังคับเปิดคืนให้) เจอ 0 object ให้ **ดูภาพก่อน** อย่าเพิ่งลด `confidence`
+- `ros2 run` ทิ้ง python orphan — `pgrep -af yolo_detector` ต้องมีไม่เกิน 1 ก่อนเชื่อผลลัพธ์
+- ultralytics 8.4 เปลี่ยน `half` เป็น `quantize` (node แปลงให้แล้ว) ไม่งั้น warn ทุก predict จนกลบ log
+- ไม่มี camera_info: YOLO เป็น 2D และ RViz *Image* display ไม่อ่านมัน
+
+---
+
+<a id="lane"></a>
+### 4.4 Lane following — ขับตามเลนด้วยกล้อง
+
+**ไม่ใช้ Nav2 เลย** ไม่มีแมพ ไม่มี costmap ไม่มี goal — กล้องหน้าเห็นเส้นเลน คำนวณว่าเบี่ยงจากกลางเลนเท่าไร
+แล้วส่งมุมเลี้ยวเข้า `/cmd_vel_twist` ตรง ๆ · **ห้ามรันพร้อม Nav2** (สอง publisher แย่งกันสั่งเลี้ยว)
+
+```
+/csi_front/image_raw ──> lane_follower.py ──> /cmd_vel_twist ──> Isaac
+                              ▲    └────────> /lane/debug_image
+                   /lane/avoid │ (follow | avoid | stop) จาก obstacle_avoider
+```
+
+```bash
+QCAR2_CAMERA_PRESET=lane_avoid python3 scripts/isaac_camera_streams.py   # ครั้งเดียว
+ros2 launch qcar2_isaac_nav2 qcar2_lane_follow_launch.py tune:=true      # จูนสี: s=เซฟ q=ออก
+ros2 launch qcar2_isaac_nav2 qcar2_lane_follow_launch.py                 # ขับ
+```
+
+**กฎเดียวใช้ได้ทั้งถนน 1 เลน (ขาว 2 ข้าง) และ 2 เลน (น้ำเงินกลาง)** เพราะกฎมองว่า "เส้นที่ใกล้ที่สุด
+ซ้าย/ขวาคืออะไร" ไม่ได้มองว่าถนนแบบไหน — เห็นครบสองข้าง = เล็งกึ่งกลาง, เห็นข้างเดียว = ห่างครึ่งเลน
+โดยครึ่งความกว้างเลน**วัดแล้วจำ (EMA)** ตอนที่เห็นครบ ไม่ใช่ค่า default
+รถขับชิดขวา เส้นน้ำเงินจึงต้องอยู่ซ้ายเสมอ ถ้าเจอน้ำเงินทางขวา = หลุดไปเลนสวน โค้ดจะเล็งข้ามกลับ
+
+**ที่เก็บค่า 2 ที่ แยกหน้าที่กันชัด**
+
+| ไฟล์ | เก็บอะไร | เขียนโดย |
+|---|---|---|
+| `~/.ros/qcar2_lane_colors.yaml` | HSV, `roi_top`, `band_frac` | `tune:=true` (กด `s` = **เขียนทับทั้งไฟล์** อย่างอื่นที่ใส่ไว้หายเงียบ) |
+| `config/lane_avoid.yaml` (profile) | ค่าขับ + ค่าหลบ **ทุกตัว** | มือ (ก๊อปไป `~/.ros/qcar2_lane_avoid.yaml` แล้วแก้ได้โดยไม่ต้อง build) |
+
+ลำดับความสำคัญ **command line > profile > default ในโค้ด** — `declare_parameter('trigger_distance', 2.00)`
+ในซอร์สจึงไม่ใช่ค่าที่รถใช้ ยกเว้นสั่ง `profile:=none` (พิสูจน์ด้วย `ros2 param get`)
+
+| argument | หมายเหตุ |
+|---|---|
+| `speed`, `kp`, `kd` | เกนพื้นฐาน · กล้องออก ~10 Hz เร็วเกินนี้คือเลี้ยวจากภาพเก่า (เข้าโค้งลดให้เอง) |
+| `k_head` | เกนต่อ**ทิศทางเลน** จากสองแถบ look-ahead — กันเปลี่ยนเลนแล้วเลยเป้า |
+| `max_error_rate` | จำกัดความเร็วที่จุดเล็งเลื่อนข้าง กันหักกระชากตอนสลับโหมด |
+| `max_steering_angle` | ต้องเท่ากับใน bridge และลิมิตของ Isaac (0.50) |
+| `blue_is_centre_line` | `true` = ข้ามเส้นน้ำเงินไปเลนซ้ายแล้วกลับ · `false` = เบี่ยงชิดซ้ายในคอริดอร์เดิม (`avoid_offset_frac`) |
+| `max_run_frac` | เส้นจริงกว้าง ~8% ของภาพ — ของขาว/กำแพง/พื้นสว่างเป็น run หลายร้อย px ถ้าไม่ตัดจะเล็งเข้าไปชน |
+| `tune`, `colors`, `avoid`, `profile` | สลับโหมด / เลือกไฟล์ / เปิดปิดตัวหลบ |
+
+ดูว่ามันเห็นอะไร: `ros2 run rqt_image_view rqt_image_view /lane/debug_image`
+(หน้าต่างจูนคือ**ภาพเดียวกับที่ตัวขับเห็น** — คำถามคือ "จุดเล็งไปกลางเลนไหม" ไม่ใช่ "mask ติดเส้นไหม")
+
+---
+
+<a id="obstacle"></a>
+### 4.5 Obstacle detection — หลบสิ่งกีดขวาง
+
+`src/obstacle_avoider.py` **ไม่สั่งเลี้ยวเอง** อ่านเซนเซอร์ ตัดสินใจ แล้ว publish คำเดียวลง
+`/lane/avoid` ที่ 10 Hz: `follow` / `avoid` (เกาะเลนซ้าย) / `stop` (ใกล้เกินกว่าจะหลบทัน)
+ที่ต้องแยกโหนดเพราะ **`/cmd_vel_twist` ต้องมี publisher เจ้าเดียว** ผลพลอยได้คือเปิดปิดได้ระหว่างที่รถวิ่งอยู่
+
+**สองเซนเซอร์ ทางเดินเดียว** — `/scan` (lidar 4 Hz รอบตัว) + `/scan_depth` (depth 10 Hz เฉพาะหน้า)
+เป็น LaserScan เหมือนกัน `scan_topics` จึงเป็นลิสต์ และ **ทุกอย่างวัดใน `base_link` ผ่าน TF**
+(เซนเซอร์สองตัวห่างกัน ~0.1 ม. = 8% ของระยะ trigger)
+เสริมกันไม่ซ้ำกัน: lidar เป็นตัวเดียวที่มองข้าง/หลังได้ ส่วน depth เร็วกว่า 2–3 เท่าและเห็นของเตี้ยกว่า
+
+**สองกรอบที่ใช้ตัดสิน และอยู่คนละเฟรมกัน** — นี่คือหัวใจของการออกแบบ
+
+| กรอบ | เฟรม | ใช้ตอบ |
+|---|---|---|
+| FRONT | `base_link` (หันตามรถ) | เลนที่วิ่งอยู่โดนขวางไหม — `abs(y) ≤ corridor_half_width`, `x ≤ trigger_distance` |
+| BEHIND | เลนเดิมที่ออกมา (คาไว้ตอนเริ่มหลบ) | เลนที่จะกลับเข้าไปโล่งจริงไหม — `abs(y) ≤ lane_half_width`, `side_x_min..max` (เริ่มจาก**หลังท้ายรถ**) |
+
+**ออกง่าย กลับยาก**: FRONT ติด = เข้า `avoid` ทันที แต่จะกลับได้ต่อเมื่อครบทั้ง BEHIND โล่งต่อเนื่อง
+`side_clear_time` **และ** ออกมาแล้วจริง `min_clearance` **และ** FRONT โล่ง
+(FRONT ยังไม่โล่ง = ไม่กลับเด็ดขาด — แถวของสิ่งกีดขวางคือการหลบครั้งเดียว ไม่ใช่ครั้งละก้อน
+ไม่งั้นกลายเป็นส่ายเข้าออกทุก ~0.5 ม.)
+
+**ลิดาร์เป็นคนตัดสินว่าพ้นแล้ว ไม่ใช่ระยะ** — `pass_distance` เหลือหน้าที่เดียว: ใช้เมื่อกรอบข้าง
+**ไม่เคยจับอะไรได้เลย** ตลอดการหลบ (ของเตี้ยกว่าระนาบลิดาร์ มองจากข้างเหมือนถนนโล่งเป๊ะ)
+และนับ **จากตอนเทียบข้าง** ไม่ใช่จากตอนเริ่มหลบ ตัวเลขจึงหมายถึงความยาวสิ่งกีดขวาง + ความยาวรถ
+และไม่ต้องจูนใหม่เมื่อเปลี่ยน `trigger_distance` · log บอกว่าใช้ทางไหน:
+`lane behind clear for 0.8 s, 0.42 m past` (ลิดาร์) หรือ `never seen abeam, 0.50 m past` (ระยะ)
+
+**สองระนาบ สองความสูง** — วัดจริง: กล่องกีดขวางสูง 0.11–0.19 ม. **ต่ำกว่าระนาบลิดาร์ 0.194 ม.**
+สแกน 1600 เรย์ไม่มีเรย์เสียแม้แต่อันเดียวทั้งที่จมูกรถชนอยู่
+กล้อง depth ช่วยได้ก็ต่อเมื่อ **`scan_height: 40`** (nav ใช้ 10 ซึ่งเป็นระนาบ 0.176 ม. สูงกว่ากล่องเหมือนกัน)
+เพราะแถวที่**ต่ำกว่า**แกนกล้องคือแถวที่ก้มลงไปโดน — `fy = 484.2`, ±20 แถว = ก้ม 2.37°:
+ที่ 2.0 ม. เห็นของสูง 0.093 ม. (ยิ่งไกลยิ่งเห็นของเตี้ยกว่า ซึ่งเข้าทางพอดี)
+
+**`trigger_distance` คือปุ่มหลัก และถูกกำหนดด้วยเรขาคณิต ไม่ใช่รสนิยม** — `R = 0.258/tan(0.50) = 0.472` ม.
+เปลี่ยนเลน 0.66 ม. แบบสองส่วนโค้ง: เหวี่ยง 30° ต้องใช้ 2.46 ม. · 40° ใช้ 1.81 ม. · 50° ใช้ 1.42 ม.
+กล้อง CSI เห็น ±48.8° เกิน ~40° เส้นกลางเลนหลุดเฟรม แล้ว follower ขึ้น `lane lost` **กลางการแซง**
+ต่ำกว่า ~1.0 ม. กล้องประคองเส้นผ่านการเหวี่ยงไม่ได้ ไม่ว่าจะจูนอย่างอื่นดีแค่ไหน (+ หัวรถล้ำ `base_link` อีก ~0.2 ม.)
+
+**เงียบ ≠ ปลอดภัย** — ถ้า scan ทุกตัวเงียบ มันจะ**ค้างสถานะเดิม** ไม่ตกกลับไป `follow`
+(lidar หลุดกลางคันต้องไม่ทำให้รถตัดกลับเข้าไปชน) ส่วน `/odom` ที่หายจะข้ามเงื่อนไขระยะพร้อม warning
+แทนที่จะค้างใน `avoid` ตลอดกาล
+
+**อีกทางหนึ่ง: depth เข้า Nav2 costmap** — `depth_scan_launch.py` แปลง `/realsense_depth` เป็น
+`/scan_depth` เข้า **local costmap เท่านั้น** (`use_depth_scan:=false` เพื่อปิด)
+เข้า global ไม่ได้เพราะ FOV แค่ ~67° จะ clear กำแพงในแมพทิ้งทันทีที่รถหันหนี
+ต้องมี frame `depth_scan_link` แยก เพราะ `depthimage_to_laserscan` ไม่ประทับ frame กล้องให้
+ถ้าใช้ optical frame ตรง ๆ สิ่งกีดขวางจะถูกหมุน 90° ลงไปใต้พื้น
+
+---
+
+<a id="trouble"></a>
+## 5. แก้ปัญหา
+
+| อาการ | สาเหตุที่เจอบ่อยที่สุด |
+|---|---|
+| รถวิ่งวน | รถจอดค้างในเขต inflation (cell `253`) — teleop ออกที่โล่งก่อน · ถ้าวนในที่โล่ง ให้กลับไปตรวจการแปลงมุมเลี้ยวใน bridge |
+| Nav2 บอกว่ากำลังวิ่งแต่รถนิ่ง | `ros2 topic info -v /cmd_vel_nav` มีสองชนิดปนกัน (`enable_stamped_cmd_vel`) |
+| goal fail ใน ~13 ms | TF ขาด — `tf2_echo map base_link` · มักเพราะกด Stop/Play ใน Isaac Sim |
+| `Received map message is malformed` | มีสอง stack รันซ้อนกัน — `ros2 node list \| sort \| uniq -d` |
+| RViz ไม่เห็นแมพ | `/map` เป็น transient local ไฟล์ `.rviz` ในนี้ตั้งถูกแล้ว ถ้าตั้งเองต้องไม่ใช่ Volatile |
+| แก้ config แล้วไม่มีอะไรเปลี่ยน | ลืม `colcon build` (หรือใช้ไฟล์ใน `~/.ros/` แทน) |
+
+**restart ฝั่ง ROS อย่างเดียว** (อย่าแตะ Isaac Sim — มันถือ scene state และเปิดใหม่กินเวลาเป็นนาที):
 
 ```bash
 pkill -f 'ros2 launch qcar2_isaac_nav2'
@@ -89,1105 +404,5 @@ pgrep -f 'rtabmap'                 | xargs -r kill -9
 ros2 daemon stop && ros2 daemon start
 ```
 
----
-
-## วิธีรัน
-
-### เฟส 1 — เก็บแมพ
-
-```bash
-source install/setup.bash
-
-# terminal 1 : SLAM + RViz
-ros2 launch qcar2_isaac_nav2 qcar2_mapping_launch.py
-
-# terminal 2 : ขับรถ (ขับช้า ๆ เพราะ /scan ออกแค่ ~4 Hz)
-ros2 run teleop_twist_keyboard teleop_twist_keyboard \
-    --ros-args -p speed:=0.6 -p turn:=0.5 -r /cmd_vel:=/cmd_vel_twist
-
-# terminal 3 : เซฟแมพ แล้ว build ให้ install เห็น
-ros2 run qcar2_isaac_nav2 save_map.sh qcar2_map
-colcon build --packages-select qcar2_isaac_nav2
-```
-
-ต้องขับให้ครบทุกทางที่จะใช้นำทางจริง เพราะ `allow_unknown: false` planner จะไม่วิ่งผ่านพื้นที่ที่ยังไม่ได้แมพ
-
-### เฟส 2 — นำทาง
-
-```bash
-source install/setup.bash
-ros2 launch qcar2_isaac_nav2 qcar2_navigation_launch.py
-# ระบุแมพอื่นได้: map:=/abs/path/to/other_map.yaml
-```
-
-รอให้ขึ้น `Managed nodes are active` **ครบทั้ง 2 ตัว** แล้วใน RViz กด
-**2D Pose Estimate** (เฉพาะกรณีรถไม่ได้อยู่จุดเดียวกับตอนเริ่มแมพ) ตามด้วย **2D Goal Pose**
-
-เช็คว่าปกติ:
-
-```bash
-ros2 run tf2_ros tf2_echo map base_link   # ต้องหาเจอ
-ros2 topic hz /cmd_vel_twist              # ต้องมีค่าเมื่อมี goal
-ros2 node list | sort | uniq -d           # ต้องว่าง
-```
-
----
-
-## เส้นทางกล้อง — V-SLAM ด้วย RGB-D (ไม่ใช้ lidar)
-
-เก็บแมพด้วย **กล้อง depth** แทน lidar ใช้ RTAB-Map ทำ RGB-D SLAM: ดึง visual feature
-จากภาพสี, ปิด loop จากหน้าตาของสถานที่, แล้วสะสมภาพ depth เป็น **voxel map 3 มิติ**
-Nav2 วางแผนใน 2 มิติอยู่ดี RTAB-Map เลยฉาย voxel map ลงมาเป็น occupancy grid ปกติบน `/map`
-ให้ costmap กินต่อโดยไม่ต้องแก้อะไร
-
-แมพ 3 มิติตัวจริงอยู่ใน `/cloud_map` (และไฟล์ `.ply` ที่ export ไว้) ส่วน `/map` คือเงา 2 มิติของมัน
-
-### ขั้นที่ 0 — ฝั่ง Isaac Sim (ทำครั้งเดียว ตอน **หยุด** sim)
-
-RGB-D SLAM ต้องการ depth ที่ **registered** กับภาพสี — จุดศูนย์กลางเลนส์เดียวกัน intrinsics
-เดียวกัน timestamp เดียวกัน — เพราะมันไปอ่านค่า depth ตรงพิกเซลที่เจอ feature พอดี
-asset ของ QCar2 จำลอง D435 จริง คือ `realsenseRGB` กับ `realsenseDepth` ห่างกัน 37 มม.
-ที่ระยะ 1 ม. เพี้ยนไป ~18 พิกเซล ทุก feature จะได้ depth ของของที่อยู่ข้าง ๆ มัน
-`/realsense_depth` เดิมจึงใช้กับงานนี้ **ไม่ได้** (ใช้กับ `depthimage_to_laserscan` ได้ปกติ
-เพราะอันนั้นอ่านแค่แถวเดียว)
-
-```bash
-# Window > Script Editor ใน Isaac Sim แล้ว paste ไฟล์นี้ Run (sim ต้องหยุดอยู่)
-src/qcar2_isaac_nav2/scripts/isaac_add_rgbd_camera.py
-```
-
-สคริปต์สร้าง Camera prim เพิ่ม 1 ตัว**ใต้ `realsenseRGB`** (สืบทอด Xform มาเป๊ะ ๆ) แล้วให้
-render product ตัวเดียวป้อน publisher 3 ตัว สี/depth จึงออกจาก render product เดียวกัน
-= timestamp ตรงกัน ไม่ต้องใช้ approximate sync
-
-กด PLAY แล้วเช็ค:
-
-```bash
-ros2 topic hz /realsense/color/image_raw    # ~10 Hz
-ros2 topic hz /realsense/depth/image_raw    # เท่ากัน stamp ตรงกัน
-ros2 topic echo /realsense/camera_info --once
-```
-
-ถ้าเฟรมเรตตกมาก (เคยวัดได้เหลือ 1.6 Hz) แปลว่ากล้องตัวอื่นในซีนแย่ GPU อยู่ — asset มี
-render product 3 ตัวที่ publish ทิ้งเปล่า ๆ ปิดด้วย `scripts/isaac_camera_streams.py`
-(`frameSkipCount` **ไม่ช่วย** เพราะมันหรี่แค่การ publish ไม่ได้หรี่การ render)
-
-### เฟส 1 — เก็บแมพด้วยกล้อง
-
-```bash
-source install/setup.bash
-
-# terminal 1 : RTAB-Map + RViz
-ros2 launch qcar2_isaac_nav2 qcar2_vslam_mapping_launch.py
-
-# terminal 2 : ขับช้า ๆ ให้ครบทุกทาง
-ros2 run teleop_twist_keyboard teleop_twist_keyboard \
-    --ros-args -r cmd_vel:=/cmd_vel_twist -p speed:=0.3 -p turn:=0.3
-
-# terminal 3 : เซฟ (ต้องเซฟ**ตอนที่ terminal 1 ยังรันอยู่**) แล้ว build
-ros2 run qcar2_isaac_nav2 save_vslam_map.sh qcar2_vslam_map
-colcon build --packages-select qcar2_isaac_nav2
-```
-
-ได้ผลลัพธ์ 2 ชิ้น และ **ต้องเก็บทั้งคู่**:
-
-| ไฟล์ | ใครใช้ |
-|---|---|
-| `~/.ros/qcar2_vslam.db` | RTAB-Map — pose graph + visual words ที่ใช้ relocalise ตอนเฟส 2 |
-| `maps/qcar2_vslam_map.yaml` + `.pgm` | `map_server` — static layer ของ costmap |
-
-ทำไมต้องมี `.pgm` ทั้งที่ RTAB-Map เสิร์ฟ `/map` เองได้: การให้มันเสิร์ฟแปลว่าต้องอุ้ม
-occupancy grid ของ **ทุก node** ไว้ใน working memory แมพนี้ (253 node, 12 ม., 3D) ดันโปรเซส
-ทะลุ 6 GB จน OOM killer ฆ่า Isaac Sim ทิ้ง ส่วน `.pgm` หนักไม่กี่ร้อย kB และเป็นภาพฉาย 2 มิติ
-อันเดียวกับที่ Nav2 กินอยู่แล้ว
-
-ปิดท้ายด้วย Ctrl-C ที่ terminal 1 เพื่อให้ฐานข้อมูลถูกปิดอย่างถูกต้อง
-
-### เฟส 2 — นำทางด้วยกล้อง
-
-```bash
-source install/setup.bash
-ros2 launch qcar2_isaac_nav2 qcar2_vslam_navigation_launch.py
-```
-
-RTAB-Map ขึ้นในโหมด localization (`Mem/IncrementalMemory=false`): โหลด `.db` เดิม เทียบเฟรม
-RGB-D สด ๆ กับเฟรมที่เก็บไว้ แล้ว publish `map -> odom` แทน AMCL ที่เหลือเหมือนเดิมทุกอย่าง
-
-**ห้ามเปิด AMCL หรือ stack lidar ค้างไว้พร้อมกัน** — จะมีคน publish `map -> odom` สองคนแย่งกัน
-และ `/map` สองเจ้าขนาดไม่เท่ากันจะได้ `Received map message is malformed. Rejecting.` ไม่จบไม่สิ้น
-
-อาร์กิวเมนต์ที่ควรรู้:
-
-| อาร์กิวเมนต์ | ค่าตั้งต้น | ความหมาย |
-|---|---|---|
-| `start_at_origin` | `true` | สมมติว่ารถเริ่มที่จุดกำเนิดของแมพเลย ไม่ต้องรอ relocalise — จริงใน Isaac Sim เพราะมัน respawn รถที่เดิมเสมอ และกินแรมแค่ ~0.7 GB |
-| | `false` | บังคับให้ RTAB-Map **หาตัวเองจากกล้องจริง ๆ** (คือการทดสอบ V-SLAM ที่ซื่อสัตย์ที่สุด) แต่กิน ~2.7 GB และ ~0.6 วิ/เฟรม และแมพต้องถูกเก็บมาตอนกล้อง expose ถูกต้อง |
-| `database_path` | `~/.ros/qcar2_vslam.db` | ฐานข้อมูลจากเฟส 1 |
-| `map` | `maps/qcar2_vslam_map.yaml` | ภาพฉาย 2 มิติที่ `map_server` เสิร์ฟ |
-| `use_depth_scan` | `true` | ป้อน `/scan_depth` เข้า local costmap เพิ่ม (ดูหัวข้อถัดไป) |
-
-### กับดักที่เจอมาแล้ว
-
-**`RGBD/MaxOdomCacheSize` ต้องเป็น 1** — ค่าตั้งต้น 10 ทำให้ RTAB-Map รอ localization ที่ตรงกัน
-หลาย ๆ ครั้งก่อนจะยอม publish รถที่ **จอดนิ่ง** อยู่ตอนเริ่มรันไม่ผลิต odometry pose ใหม่เลย
-cache เลยไม่มีวันเต็ม log วน `Localization was good, but waiting for another one to be more accurate`
-`map -> odom` ไม่เคยออก และทุก goal fail ด้วย `map does not exist` โดยไม่มีบรรทัดไหนเป็น error
-
-**`Mem/InitWMWithAllNodes` ต้องผูกกับ `start_at_origin`** เพราะสองตัวนี้ตอบคำถามเดียวกัน คือ
-"RTAB-Map ต้องออกไปหาตัวเองในแมพไหม" ถ้าตั้งผิดคู่กัน (working memory ว่าง + ไม่ได้บอกตำแหน่ง)
-มันจะเงียบ ๆ ไม่ publish `map -> odom` ตลอดกาล
-
-**เปิดแมพเดิมแล้วเห็นแมพแค่นิดเดียว** — ปกติ ไม่ใช่แมพหาย: `/map` กับ cloud ประกอบจาก
-working memory เท่านั้น ถ้ายังไม่ relocalise สำเร็จ RTAB-Map จะเปิด session ใหม่ที่ยังไม่ต่อกับ
-กราฟเก่า `Mem/InitWMWithAllNodes=true` คือตัวที่ดึงทั้งกราฟกลับเข้ามา
-
-**อย่าเรียก `/rtabmap/backup`** ทั้งที่ชื่อเหมือนแค่ก๊อปไฟล์ แต่มันจริง ๆ คือ save + copy +
-**re-initialise working memory** พอ `/map` ยุบเหลือเท่าที่กล้องมองเห็นจากจุดที่รถจอด
-`save_vslam_map.sh` ก็จะเซฟทับแมพดี ๆ ด้วยเศษ 5x5 ม. อย่างเต็มใจ (สคริปต์เลยไม่เรียกให้)
-
-**loop closure ถูกปฏิเสธด้วย `Not enough inliers 0/15`** — ไปดู**ภาพสี**ก่อน อย่าเพิ่งไปแตะ
-พารามิเตอร์ SLAM นั่นคือหน้าตาของกล้องที่ expose พังจนขาวโพลน ไม่ใช่ฉากที่ texture น้อย
-แมพที่เก็บมาแบบนั้นสร้างและนำทางได้ปกติด้วย odometry ล้วน ๆ แค่ไม่มีสีและไม่มี feature เลย
-พอ expose ถูก ฉากนี้ปิด loop ได้ปกติ (31 global + 6 proximity ในระยะขับ 35 ม.)
-
-**`view_only:=true` ปลอดภัยต่อฐานข้อมูล แต่ไม่ปลอดภัยต่อแรม** — ประกอบ cloud 3 มิติเต็ม ๆ
-ของแมพ 12 ม. กินไป 6 GB จน OOM killer เอา Isaac Sim ไปด้วย ปิด Isaac Sim ก่อน หรืออ่าน `.ply` แทน
-
-**depth ของ Isaac เป็น 32FC1** ต้องบอก `Mem/DepthCompressionFormat=.png` ตรง ๆ ไม่งั้น `.rvl`
-(ซึ่งเป็นฟอร์แมต 16 บิต) จะ warn แล้วตกกลับไป `.png` ทุกรอบ หรือถ้าบังคับก็ตัดทุกอย่างที่เกิน 65 ม. ทิ้ง
-
-### ทำไม odometry ยังมาจาก Isaac ไม่ใช่ `rgbd_odometry`
-
-wheel odometry ของ Isaac ที่นี่แทบเป็น ground truth และ `rgbd_odometry` จะมีประโยชน์ก็ต่อเมื่อมัน
-publish `odom -> base_link` ตัวที่สอง ซึ่งจะไปแย่งกับตัวที่ Isaac เป็นเจ้าของอยู่ RTAB-Map ยังทำงาน
-ส่วนที่เป็นภาพครบทุกอย่าง (feature, loop closure, grid) ถ้าอยากได้ visual odometry จริง ๆ ต้องไปปิด
-TF publisher ในกราฟ drive ของ Isaac ก่อน
-
----
-
-## (ทางเลือก) ใช้ depth camera ช่วยหลบสิ่งกีดขวาง
-
-QCar2 มี RealSense อยู่บนตัวรถจริง และใน USD ก็มี prim
-`/qcar2/base_link/realsenseDepth` อยู่แล้ว **แต่เป็น Xform เปล่า ๆ** — ไม่มี Camera
-อยู่ข้างใน และไม่มี OmniGraph ตัวไหน publish ออกมาเลย (ต่างจากฝั่ง RGB ที่ต่อครบ
-เป็น `realsenseRGB/Realsense_RGB` + graph `ros_qcar2_realsense_rgb`)
-
-ข่าวดีคือ `realsenseDepth` อยู่ใน `targetPrims` ของ `ROS2PublishTransformTree` แล้ว
-เพราะฉะนั้น TF `base_link -> realsenseDepth` มีให้ใช้ตั้งแต่แรก เหลือแค่ต่อกล้องกับ
-ตัว publish
-
-### ขั้นที่ 1 — ฝั่ง Isaac Sim (ทำครั้งเดียว ตอน **หยุด** sim)
-
-เปิด **Window > Script Editor** แล้ววางไฟล์นี้ลงไปทั้งไฟล์ กด Run:
-
-```
-src/qcar2_isaac_nav2/scripts/isaac_add_depth_camera.py
-```
-
-สคริปต์จะ copy intrinsics จากกล้อง RGB มาสร้าง `realsenseDepth/Realsense_Depth`
-แล้วสร้าง graph `ros_qcar2_realsense_depth` เลียนแบบ graph ของ RGB
-รันซ้ำได้ (สร้างทับของเดิม) จากนั้นกด PLAY แล้วเช็ค:
-
-```bash
-ros2 topic hz /realsense_depth                     # ~10 Hz
-ros2 topic echo /realsense_depth_camera_info --once
-```
-
-อย่าลืม **Save** stage ไม่งั้นเปิดใหม่ต้องรันสคริปต์อีกรอบ
-
-### ขั้นที่ 2 — ฝั่ง ROS
-
-ไม่ต้องทำอะไร `qcar2_navigation_launch.py` ต่อให้แล้ว:
-
-```
-/realsense_depth ──> depthimage_to_laserscan ──> /scan_depth ──> local_costmap obstacle_layer
-```
-
-ปิดได้ด้วย `use_depth_scan:=false`
-
-เช็คว่าเข้า costmap จริง:
-
-```bash
-ros2 topic hz /scan_depth
-grep "Subscribed to Topics" /tmp/nav.log    # ต้องเห็น "scan depth_scan"
-```
-
-### ทำไมต้องมี frame `depth_scan_link`
-
-`depthimage_to_laserscan` **ไม่ได้** ประทับ frame ของกล้องลงบน scan ที่มันสร้าง —
-ค่ามุมที่มันคายออกมาเป็นแบบ LaserScan ปกติ (หมุนรอบ +z, ศูนย์อยู่ที่ +x) แต่
-`realsenseDepth` ของ Isaac เป็น **optical frame** (+z ชี้ไปข้างหน้า, +y ชี้ลง)
-ถ้าเอา scan ไปแปะ frame `realsenseDepth` ตรง ๆ สิ่งกีดขวางทุกตัวจะถูกหมุน 90°
-ลงไปอยู่ใต้พื้น
-
-launch เลย publish static TF `base_link -> depth_scan_link` ขึ้นมาอีกอัน
-ตำแหน่งเดียวกับกล้อง (0.095, -0.003, 0.176 m — ลอกจาก USD) แต่ไม่หมุน
-แล้วส่งชื่อนี้ให้ `output_frame`
-
-### ข้อจำกัดที่ต้องรู้
-
-- **เข้าเฉพาะ local costmap** — depth มี FOV แค่ ~67° ถ้าปล่อยให้มันไป
-  `clearing` ใน global costmap กำแพงในแมพจะถูกลบทิ้งทันทีที่รถหันหนี
-  ถ้าอยากให้ planner หลบของที่ไม่ได้อยู่ในแมพจริง ๆ ให้เพิ่ม `depth_scan` ใน
-  global costmap แบบ `clearing: false` เท่านั้น
-- **`scan_height: 10` คือค่าที่ห้ามเพิ่มมั่ว ๆ** — มันคือจำนวนแถวพิกเซลรอบแกนกลาง
-  ที่เอามายุบเป็น scan กล้องอยู่สูง 0.176 m มองตรง แถวที่ต่ำกว่ากลาง `n` พิกเซล
-  จะมองเห็น **พื้น** ที่ระยะ `0.176 / tan(atan(n/fy))` โดย `fy ≈ 484`
-  ที่ 10 แถว (±5) พื้นตกอยู่ที่ ~17 m ซึ่งเกิน `range_max: 3.0` เลยถูกทิ้ง
-  ถ้าเพิ่มเป็นหลักสิบปลาย ๆ พื้นจะกลายเป็นกำแพงปลอมข้างหน้ารถทันที
-- **ยังไม่ได้ต่อเข้า Cartographer** — `num_point_clouds = 0` เหมือนเดิม เฟส 1
-  ยังใช้ lidar อย่างเดียว
-- ถ้ายังไม่ได้รันสคริปต์ฝั่ง Isaac ก็ไม่พัง — `expected_update_rate` ปริยายเป็น 0.0
-  แปลว่า "ไม่มีวันหมดอายุ" source ที่ไม่มีใคร publish เลยเงียบ ๆ ไปเฉย ๆ
-
----
-
-## กล้อง CSI 360 องศา + YOLO object detection
-
-QCar2 มีกล้อง CSI 4 ตัวรอบคัน (`csi_front`, `csi_back`, `csi_left`, `csi_right`)
-ตัวละ **97.6 องศา** รวมเป็น 390 องศา คือปิดวงได้จริงและเหลือซ้อนกันนิดหน่อยตรงมุม
-
-**asset มี graph ให้ครบทั้ง 4 ตัวอยู่แล้ว ต่อสายไว้ถูกต้องหมด** แค่ 3 ตัว
-(`csi_back`, `csi_left`, `csi_right`) ถูกปิดไว้ด้วย `active = False` ของ USD เฉย ๆ
-งานที่ต้องทำจึงเป็นแค่ "เปิดสวิตช์" ไม่ใช่สร้างใหม่
-
-```
-csi_left ─┐                    ┌─ csi_right
-          ├─> yolo_detector ───┤
-csi_front ┘   (YOLO ตัวเดียว)   └─ csi_back
-                    │
-                    ├─> /csi_<pos>/detections   vision_msgs/Detection2DArray
-                    ├─> /csi_<pos>/annotated    ภาพวาดกรอบแล้ว
-                    └─> /csi/mosaic             ภาพ 4 มุมต่อกันเป็น 2x2
-```
-
-เป็นส่วนเสริมด้าน sensing ล้วน ๆ **ไม่ยุ่งกับ Nav2 เลย** ไม่ publish TF ไม่เพิ่ม costmap layer
-ไม่แตะ cmd_vel เปิด/ปิดทับ stack ที่รันอยู่ได้
-
-### ขั้นที่ 0 — ติดตั้ง ultralytics (ทำครั้งเดียว)
-
-```bash
-pip install --user --break-system-packages ultralytics
-```
-
-torch 2.10+cu128 มีอยู่แล้วจาก Isaac Sim (มาทาง PYTHONPATH) pip เห็นและไม่โหลดซ้ำ
-`--break-system-packages` จำเป็นเพราะ Ubuntu 24.04 mark python ระบบเป็น externally-managed
-
-ตัวโมเดล (`yolo11n.pt`, 5.4 MB) โหลดอัตโนมัติครั้งแรกลง `~/.cache/qcar2_yolo/`
-
-### ขั้นที่ 1 — ฝั่ง Isaac Sim (ทำครั้งเดียว ตอน **หยุด** sim)
-
-สำรอง stage ก่อน เพราะสคริปต์นี้เขียนทับ graph `ros_qcar2_csi_front` ของเดิม:
-
-```bash
-cd ~/Documents/Quanser/qcar2_nvidia/isaac_sim/Collected_qcar2_workspace
-cp qcar2_workspace.usd qcar2_workspace.usd.bak-precsi
-```
-
-แล้วเปิด Window > Script Editor ใน Isaac Sim (sim ต้องหยุด) paste ไฟล์นี้แล้ว Run:
-
-```
-src/qcar2_isaac_nav2/scripts/isaac_add_csi_cameras.py
-```
-
-สคริปต์ **ไม่ได้สร้าง graph ใหม่** มันเปิด `active` ของ 3 ตัวที่ถูกปิดไว้ แล้วแก้ค่า 3 อย่าง
-บน graph ทั้ง 4:
-
-1. `topicName` จาก `csi_back` เปล่า ๆ เป็น `csi_back/image_raw` (เปลี่ยนพร้อมกันทั้ง 4 ตัว
-   รวม csi_front ด้วย เพราะกล้องชุดนี้ใช้ด้วยกัน)
-2. `frameSkipCount = 5` (~10 Hz) ของเดิม**ไม่ได้ตั้งไว้เลย** คือ publish ทุก tick ~20 Hz
-   ซึ่งเป็นเหตุผลที่ csi_front เคยเป็น publisher ที่แพงที่สุดในซีน
-3. `inputs:enabled = False` บน render product (สร้างให้ถ้ายังไม่มี) เพื่อให้
-   `isaac_camera_streams.py` เอาไปเปิด/ปิดตาม preset ได้
-
-**ทำไมต้องเน้นว่ามันมีอยู่แล้ว** — prim ที่ `active = False` จะ "หายไป" จาก stage ทั้งดุ้น
-ลูกของมันไม่ถูก compose เลย traverse หา OmniGraph ก็ไม่เจอ `ros2 topic list` ก็ไม่มี
-มันดูเหมือน**ไม่มีอยู่จริง** มากกว่าดูเหมือนถูกปิด ถ้าเชื่อตามนั้นแล้วไปสร้าง graph ใหม่ทับ
-จะกลายเป็นสร้างของซ้อนบน prim ที่มีอยู่แล้วใน `qcar2.usd` ที่ถูก reference เข้ามา
-
-สคริปต์นี้แตะแต่ USD attribute ล้วน ๆ ไม่ต้องใช้ omni.graph runtime เลย
-เพราะฉะนั้นตรวจสอบกับ stage ที่ copy ออกมาได้ด้วย pxr เปล่า ๆ (ทำมาแล้ว)
-
-**ไม่ได้เพิ่ม camera_info publisher** เพราะต้องไปผ่า graph ที่มาจาก referenced layer
-ซึ่งเสี่ยงกว่ามาก และ pipeline นี้ไม่ต้องใช้: YOLO เป็น 2D ล้วน ๆ ส่วน RViz *Image* display
-(ต่างจาก *Camera* display) ไม่อ่าน camera_info ค่อยเพิ่มตอนที่ต้อง project detection ไป 3 มิติ
-
-**ย้อนกลับ**: ตั้ง `active = False` กลับ หรือใช้ backup — `active` ถูกเขียนเป็น override
-ลง root layer ของ stage เท่านั้น ตัว `qcar2.usd` ที่ถูก reference ไม่เคยโดนแก้
-
-จากนั้นเปิด render product ของ CSI (ดูขั้นที่ 2)
-
-### ขั้นที่ 2 — เลือกว่าจะให้กล้องตัวไหน render
-
-**นี่คือเรื่องสำคัญที่สุดของหัวข้อนี้** render product ถูก RTX render ทุกเฟรมไม่ว่าจะมีคน
-subscribe หรือไม่ และ `frameSkipCount` หรี่แค่การ publish **ไม่ได้หรี่การ render**
-ทางเดียวที่ได้ GPU คืนคือปิด render product ทิ้ง
-
-`scripts/isaac_camera_streams.py` จึงทำงานเป็น preset เลือกด้วยตัวแปร `PRESET` ใน
-Script Editor หรือ env `QCAR2_CAMERA_PRESET` ตอนรัน headless:
-
-| preset | เปิดอะไร | ใช้ตอนไหน |
-|---|---|---|
-| `vslam` | RGB-D อย่างเดียว (1 render product) | เส้นทางกล้อง V-SLAM |
-| `csi` | CSI ครบ 4 ตัว (4 render products) | YOLO 360 องศา |
-| `csi_front` | CSI หน้าอย่างเดียว (1) | อยากรัน YOLO คู่กับ V-SLAM |
-| `both` | ทั้งหมด (5) | ได้ทุกอย่างแต่ช้าลงทั้งกระดาน |
-| `none` | ไม่เปิดเลย | นำทางด้วย lidar |
-
-บน RTX 5060 นี้เคยวัดได้ว่าเปิดกล้อง 4 ตัวพร้อมกันทำให้คู่ RGB-D ที่ RTAB-Map กินเหลือ **1.6 Hz**
-เพราะฉะนั้น CSI ครบวง กับ V-SLAM **ไม่ได้ตั้งใจให้รันพร้อมกัน**บนเครื่องนี้
-ถ้าอยากได้ทั้งคู่จริง ๆ ใช้ preset `csi_front` คู่กับ `cameras:=front`
-
-### ขั้นที่ 3 — รัน
-
-```bash
-source install/setup.bash
-ros2 launch qcar2_isaac_nav2 qcar2_yolo_launch.py
-```
-
-RViz จะเปิดขึ้นมาพร้อม `/csi/mosaic` คือภาพ 4 มุมต่อกันเป็นตาราง 2x2 เรียงตามเข็มนาฬิกา
-(หน้า, ขวา / หลัง, ซ้าย) แต่ละช่องมีขอบสีประจำกล้องเพราะวิวโกดังสีเทาทั้ง 4 มุมแยกกันไม่ออกจริง ๆ
-
-เช็ค:
-
-```bash
-ros2 topic echo /csi_front/detections
-ros2 topic hz /csi/mosaic
-```
-
-### ทำไมต้องมี /csi/mosaic
-
-RViz **ไม่มี** grid layout ถ้าใส่ Image display 4 อันมันจะ dock เป็น 4 แท็บ คือเห็นทีละกล้อง
-ทางเดียวที่จะได้ 2x2 จริง ๆ คือไปเขียน QMainWindow geometry เป็น hex ลงใน `.rviz`
-ซึ่งพังทันทีที่มีคนลากขนาด panel ต่อภาพที่ฝั่ง node เลยได้ topic เดียวที่เห็นครบวง
-และ record/replay เป็นสตรีมเดียวได้ด้วย
-
-### อาร์กิวเมนต์
-
-| อาร์กิวเมนต์ | ค่าตั้งต้น | ความหมาย |
-|---|---|---|
-| `cameras` | `front,back,left,right` | เลือกกล้องที่จะรัน YOLO |
-| `model` | `yolo11n.pt` | nano เหมาะกับที่นี่เพราะ 4 กล้องแชร์ GPU ตัวเดียวที่ยัง render ซีนอยู่ `yolo11s.pt` แม่นกว่าแต่เฟรมเรตราวครึ่งเดียว |
-| `confidence` | `0.35` | ต่ำกว่า default 0.5 เพราะโกดังใน Isaac อยู่นอก distribution ของโมเดลที่เทรนบน COCO |
-| `imgsz` | `640` | ภาพ 820x410 ถูก letterbox มาที่ขนาดนี้ |
-| `half` | `true` | fp16 เร็วขึ้นราว 1.5 เท่าบน GPU นี้ บน cpu จะถูกปิดอัตโนมัติ |
-| `publish_annotated` | `true` | ปิดได้ถ้ากินแค่ `/detections` |
-
-### กับดักที่เจอมาแล้ว
-
-**ห้ามใช้ `cv_bridge` ในเครื่องนี้** — cv_bridge ของ Jazzy compile มากับ NumPy 1.x แต่
-`~/.bashrc` source `setup_python_env.sh` ของ Isaac ซึ่งดัน NumPy 2.5.2 ขึ้นหน้า PYTHONPATH
-แปลงภาพทีเดียว **segfault (exit 139)** ไม่มี traceback ให้ดู หน้าตาเหมือน GPU/driver พังมากกว่า
-dependency ชนกัน:
-
-```bash
-python3 -c "from cv_bridge import CvBridge; import numpy as np; \
-    CvBridge().cv2_to_imgmsg(np.zeros((4,4,3),np.uint8),'bgr8')"
-# Segmentation fault (core dumped)
-```
-
-`src/yolo_detector.py` จึงแปลง `sensor_msgs/Image` เองด้วย NumPy ล้วน ๆ (`decode_rgb`/`encode_rgb`)
-ไม่กี่บรรทัดและไม่ต้องพึ่ง extension ที่ compile มา **อย่าแก้กลับไปใช้ cv_bridge**
-
-**ภาพขาวโพลน = auto exposure ถูกปิด** Isaac เขียน `omni:rtx:autoExposure:enabled = False`
-ลงบนกล้องทุกตัวที่มีคนเอา render product ไปแปะ ซึ่งกล้อง CSI 3 ตัวไม่เคยมีมาก่อน
-`isaac_add_csi_cameras.py` เลยบังคับเปิดไว้ให้ ถ้า YOLO เจอ 0 object **ไปดูภาพก่อน**
-อย่าเพิ่งไปลด `confidence`
-
-**`ros2 run` ทิ้ง process ค้าง** kill PID ที่ `ros2 run` คืนมาไม่ได้ฆ่า python ตัวจริง
-มันกลายเป็น orphan ที่ยัง subscribe และยังเขียน log ทับอยู่ ตอนเจอผลลัพธ์แปลก ๆ ให้เช็คก่อน:
-
-```bash
-pgrep -af yolo_detector    # ต้องมีไม่เกิน 1
-```
-
-**ultralytics 8.4 เลิกใช้ `half`** เปลี่ยนเป็น `quantize` แล้ว ถ้าส่ง `half` ไปมันจะ warn
-**ทุกครั้งที่เรียก predict** คือ ~40 บรรทัดต่อวินาที กลบ log ของ node จนหมด
-node แปลงให้เองแล้ว (`half:=true` -> `quantize='fp16'`)
-
----
-
-## ขับตามเลนด้วยกล้อง (lane following)
-
-เส้นทางที่ **ไม่ใช้ Nav2 เลย** ไม่มีแมพ ไม่มี costmap ไม่มี goal pose — กล้องหน้าเห็นเส้นเลน
-คำนวณว่าเราเบี่ยงจากกลางเลนเท่าไร แล้วแปลงเป็นมุมเลี้ยวส่งเข้า `/cmd_vel_twist` ตรง ๆ
-
-```
-/csi_front/image_raw ──> lane_follower.py ──> /cmd_vel_twist (Twist, มุมเลี้ยว rad)
-                              ▲    │                 │
-                              │    │                 └──> Isaac Sim QCar2 drive graph
-                              │    └──> /lane/debug_image  (mask + เส้นที่เจอ + จุดเล็ง)
-                              │
-        /lane/avoid  (follow | avoid | stop)
-                              │
-/scan ──────┐                 │
-            ├──> obstacle_avoider.py  (แปลงเข้า base_link ด้วย TF)
-/scan_depth ┘
-```
-
-**ตัวหลบสิ่งกีดขวางไม่ publish cmd_vel** มันตัดสินใจอย่างเดียวแล้วบอกมาคำเดียว
-`lane_follower.py` ยังเป็น publisher เจ้าเดียวของ `/cmd_vel_twist` เหมือนเดิม —
-เหตุผลเดียวกับที่ห้ามรันพร้อม Nav2 รายละเอียดอยู่หัวข้อ
-[หลบสิ่งกีดขวาง](#หลบสิ่งกีดขวางระหว่างขับตามเลน) ข้างล่าง
-
-> **ห้ามรันพร้อม Nav2** เพราะ publish ลง `/cmd_vel_twist` ตัวเดียวกับที่
-> `twist_stamped_to_twist.py` ใช้ — สอง publisher จะแย่งกันสั่งเลี้ยว
-
-ถนนในแมพมี 2 แบบ และใช้ **กฎเดียวกัน** ทั้งคู่ เพราะกฎมองว่า "เส้นที่ใกล้ที่สุดข้างซ้ายกับข้างขวา
-คืออะไร" ไม่ได้มองว่าถนนแบบไหน:
-
-| ถนน | ขอบซ้าย | ขอบขวา | เป้าหมาย |
-|---|---|---|---|
-| 1 เลน ขาว 2 ข้าง | ขาว | ขาว | กึ่งกลางระหว่างสองเส้น |
-| 2 เลน มีเส้นน้ำเงินกลาง | **น้ำเงิน** | ขาว | กึ่งกลางระหว่างสองเส้น |
-| เห็นข้างเดียว | — | — | ห่างจากเส้นนั้นครึ่งความกว้างเลน |
-
-ความกว้างครึ่งเลนไม่ได้เดาเอา — ตอนไหนที่เห็นครบสองข้างจะ**วัดแล้วจำไว้** (EMA)
-พอเส้นหนึ่งหายไปจึงใช้ค่าที่วัดมาจริง ไม่ใช่ค่า default
-
-รถขับ **ชิดขวา (right-hand traffic)** เส้นน้ำเงินกลางถนนจึงต้องอยู่ **ทางซ้าย** ของรถเสมอ
-ถ้าเจอน้ำเงินอยู่ทางขวาโดด ๆ แปลว่าหลุดไปเลนสวน โค้ดจะเล็งไป**อีกฝั่งของเส้นน้ำเงิน**
-เพื่อข้ามกลับ ไม่ใช่จัดกลางเลนสวนต่อไป
-
-### ขั้นที่ 0 — ฝั่ง Isaac Sim (ทำครั้งเดียว ตอน **หยุด** sim)
-
-เปิด render product แค่ 2 ตัว: กล้องหน้าไว้หาเลน กับกล้อง depth ไว้ช่วยหาสิ่งกีดขวาง
-(4 ตัวกิน GPU ฟรีในงานนี้):
-
-```bash
-QCAR2_CAMERA_PRESET=lane_avoid python3 scripts/isaac_camera_streams.py
-```
-
-ถ้ายังไม่เคยเปิด graph ของกล้อง CSI บน stage นี้ ให้รัน `scripts/isaac_add_csi_cameras.py` ก่อน
-(รายละเอียดอยู่ในหัวข้อ YOLO ข้างบน) และถ้ายังไม่เคยมี `/realsense_depth` ให้รัน
-`scripts/isaac_add_depth_camera.py` ก่อน (หัวข้อ depth camera ข้างบน)
-
-ไม่อยากใช้กล้อง depth ก็ได้ — `QCAR2_CAMERA_PRESET=csi_front` แล้วขับด้วย
-`use_depth_scan:=false scan_topics:="['/scan']"` ตัวหลบจะทำงานด้วย lidar ตัวเดียว
-
-### ขั้นที่ 1 — ปรับสีก่อนขับ
-
-กด **PLAY** ใน Isaac Sim แล้ว:
-
-```bash
-ros2 launch qcar2_isaac_nav2 qcar2_lane_follow_launch.py tune:=true
-```
-
-หน้าต่างที่เปิดมาคือ**ภาพเดียวกับที่ตัวขับเห็น** ไม่ใช่แค่ mask เปล่า ๆ — มี ROI, แถบ look-ahead,
-เส้นที่ตรวจเจอ และจุดที่รถจะเล็งไป วาดทับให้หมด คำถามที่ต้องตอบคือ
-"จุดเล็งไปกลางเลนไหม" ไม่ใช่แค่ "mask ติดเส้นไหม"
-
-| slider | ทำอะไร |
-|---|---|
-| `colour 0=white 1=blue` | สลับว่ากำลังปรับสีไหน สไลเดอร์ H/S/V จะโหลดค่าของสีนั้นมาให้ |
-| `H min/max` | ช่วง hue (OpenCV ใช้ 0–179 ไม่ใช่ 0–360) — สีขาวเปิดกว้าง 0–179 ไปเลย |
-| `S min/max` | ความอิ่มสี — **สีขาวคือ S ต่ำ** สีน้ำเงินคือ S สูง |
-| `V min/max` | ความสว่าง — สีขาวคือ V สูง |
-| `roi top %` | ตัดส่วนบนของภาพทิ้ง เอาไว้ไม่ให้ผนัง/ขอบฟ้าเข้ามาปน |
-| `band %` | มองไกลแค่ไหน วัดขึ้นจากขอบล่างของ ROI — มากขึ้น = มองไกลขึ้น = นิ่งขึ้นแต่ตอบสนองช้าลง |
-
-- ปรับ **ขาว** บนถนนที่มีขาว 2 ข้าง ปรับ **น้ำเงิน** บนถนนที่มีเส้นกลาง — ค่าทั้งสองสีอยู่ในไฟล์เดียวกัน
-- กด **`s`** เซฟ, **`q`** ออก
-
-ไฟล์ที่ได้คือ `~/.ros/qcar2_lane_colors.yaml` — **ไม่ใช่** `config/lane_colors.yaml` ใน source
-เพราะ `config/` ถูก install ผ่าน CMake ค่าที่แก้ตรงนั้นจะไม่มีผลจนกว่าจะ `colcon build` ใหม่
-(กับดักคลาสสิกของ workspace นี้) การเซฟลง `~/.ros` ทำให้วน "จูน → ขับ → จูนใหม่" ได้ด้วย 2 คำสั่ง
-เหมือนที่เส้นทาง V-SLAM เก็บ `.db` ไว้ที่เดียวกัน launch จะหยิบไฟล์นี้ถ้ามี ถ้าไม่มีค่อยใช้
-`config/lane_colors.yaml` ที่แถมมาในแพ็กเกจ
-
-### ขั้นที่ 2 — ขับ
-
-```bash
-ros2 launch qcar2_isaac_nav2 qcar2_lane_follow_launch.py
-
-# อีก terminal: ดูว่ามันเห็นอะไรอยู่
-ros2 run rqt_image_view rqt_image_view /lane/debug_image
-```
-
-### profile — ค่าที่จูนแล้วอยู่ในไฟล์ ไม่ต้องพิมพ์ซ้ำ
-
-ค่าขับและค่าหลบทั้งหมดอยู่ใน `config/lane_avoid.yaml` ซึ่งเป็น `profile` ตั้งต้น
-คำสั่งเต็มจึงเหลือแค่:
-
-```bash
-ros2 launch qcar2_isaac_nav2 qcar2_lane_follow_launch.py
-```
-
-ลำดับความสำคัญ **command line > profile > ค่า default ในโหนด** ทดลองค่าเดียวชั่วคราว
-ไม่ต้องแก้ไฟล์:
-
-```bash
-ros2 launch qcar2_isaac_nav2 qcar2_lane_follow_launch.py speed:=0.15 trigger_distance:=2.0
-```
-
-| `profile:=` | ได้อะไร |
-|---|---|
-| `lane_avoid` (ตั้งต้น) | `~/.ros/qcar2_lane_avoid.yaml` ถ้ามี ไม่งั้น `config/lane_avoid.yaml` |
-| `ชื่ออื่น` | หาแบบเดียวกัน — ทำหลาย profile ไว้สลับได้ |
-| `/path/to/x.yaml` | ใช้ไฟล์นั้นตรง ๆ |
-| `none` | ไม่โหลด profile เลย ทุกโหนดใช้ default ของตัวเอง |
-
-**ตัวเลขใน source ไม่ใช่ค่าที่รถใช้** `declare_parameter('trigger_distance', 2.00)` ใน
-`obstacle_avoider.py` แปลว่า "พารามิเตอร์นี้มีอยู่ ชนิด double และถ้าไม่มีใครส่งค่ามาก็ใช้ 2.00"
-— launch ส่ง profile เข้าไปเป็น `--params-file` ค่าใน YAML จึงทับเสมอ โหนดไม่มีโค้ดอ่าน YAML
-เลย เป็นกลไกมาตรฐานของ ROS 2 (Nav2 กับ `qcar2_nav2_amcl.yaml` ก็ทำงานแบบเดียวกัน)
-ตัวเลขใน source จะมีผลก็ต่อเมื่อสั่ง `profile:=none`
-
-พิสูจน์ได้ด้วย `ros2 param get /obstacle_avoider trigger_distance` ระหว่างที่รันอยู่
-
-**แก้ `config/lane_avoid.yaml` แล้วต้อง `colcon build` ใหม่** (กับดักเดิมของ workspace นี้)
-อยากแก้แล้วรันได้เลยให้ก๊อปไปไว้ที่ `~/.ros/qcar2_lane_avoid.yaml` — launch จะหยิบอันนั้นก่อน
-
-`ros2 launch ... profile:=` เฉย ๆ ใช้ไม่ได้ CLI ของ ROS ไม่รับค่าว่าง ต้องใช้คำว่า `none`
-
-profile ครอบคลุม **ทุกพารามิเตอร์ที่ปรับได้ของทั้งสองโหนด** รวมของที่ไม่มี launch argument
-ให้ — โดยเฉพาะ **กรอบเลนที่ออกมา** (`side_x_min/max`, `lane_half_width`) ซึ่งเป็นตัวที่ลิดาร์ใช้
-ตัดสินว่าพ้นสิ่งกีดขวางหรือยัง และ `min_hits`, `min_range`, `scan_timeout` ฝั่งเซนเซอร์
-กับ `max_run_frac`, `half_width_tolerance`, `heading_band_gap`, `horizon_frac` ฝั่งตรวจจับเลน
-
-**สีเลนไม่ได้อยู่ใน profile** มันอยู่ที่ `~/.ros/qcar2_lane_colors.yaml` ที่โหมดจูนเขียนให้
-
-และนี่ไม่ใช่แค่การจัดหมวด — **โหมดจูนเขียนทับไฟล์สีทั้งไฟล์ทุกครั้งที่กด `s`** โดยเก็บไว้แค่
-ค่า HSV, `roi_top`, `band_frac` อะไรที่ใส่เพิ่มลงไฟล์นั้นจะหายเงียบ ๆ ค่าตรวจจับอื่น ๆ
-จึงต้องอยู่ใน profile
-
-### อาร์กิวเมนต์
-
-อาร์กิวเมนต์ที่ทำเครื่องหมาย **P** คือของที่ profile เป็นเจ้าของ — ปล่อยว่างไว้จะใช้ค่าจาก
-ไฟล์ ใส่ค่าเมื่อไรก็ชนะไฟล์เมื่อนั้น
-
-| อาร์กิวเมนต์ | ค่าเริ่มต้น | หมายเหตุ |
-|---|---|---|
-| `profile` | `lane_avoid` | ไฟล์ค่าที่จูนแล้ว ดูหัวข้อข้างบน |
-| `tune` | `false` | `true` = เปิดหน้าต่างปรับสี ไม่ publish cmd_vel |
-| `colors` | (ว่าง) | ว่าง = ใช้ `~/.ros/qcar2_lane_colors.yaml` ถ้ามี ไม่งั้นใช้ของในแพ็กเกจ |
-| `image_topic` | `/csi_front/image_raw` | กล้องที่ใช้หาเลน |
-| `cmd_topic` | `/cmd_vel_twist` | `angular.z` ที่นี่คือ **มุมเลี้ยว** ไม่ใช่ yaw rate |
-| `speed` **P** | (profile) | m/s กล้องออกแค่ ~10 Hz เร็วกว่านี้คือเลี้ยวจากภาพเก่า เข้าโค้งจะลดให้เอง |
-| `kp` **P** | (profile) | เกนต่อ error ที่ normalize แล้ว (-1..+1 เทียบครึ่งความกว้างภาพ) |
-| `kd` **P** | (profile) | หน่วง — รถส่ายบนทางตรงให้เพิ่มค่านี้ |
-| `k_head` **P** | (profile) | เกนต่อ**ทิศทางเลน** (จุดลู่เข้าของเส้นระหว่างสองแถบ) — กันไม่ให้เปลี่ยนเลนแล้วเลยเป้า |
-| `max_error_rate` **P** | (profile) | จำกัดความเร็วที่จุดเล็งเลื่อนข้าง (ครึ่งภาพ/วินาที) กันหักกระชากตอนสลับโหมด |
-| `max_steering_angle` **P** | (profile) | rad ต้องเท่ากับใน bridge และรัศมีวงเลี้ยวของ Nav2 |
-| `publish_debug` | `true` | `/lane/debug_image` |
-| `avoid` | `true` | รัน `obstacle_avoider.py` ด้วย — `false` = ขับตามเลนเปล่า ๆ |
-| `blue_is_centre_line` **P** | (profile) | `true` = ข้ามเส้นน้ำเงินไปเลนซ้ายแล้วกลับ · `false` = เบี่ยงชิดขอบซ้ายในเลนเดิม (ถนนไม่มีเส้นกลาง) |
-| `state_topic` | `/lane/avoid` | ช่องบอกโหมดจากตัวหลบไปหาตัวขับ |
-| `use_depth_scan` | `true` | สร้าง `/scan_depth` จากกล้อง depth ให้ตัวหลบใช้ด้วย |
-| `scan_topics` **P** | (profile) | แหล่ง LaserScan ทั้งหมด วัดใน `base_link` ผ่าน TF |
-| `scan_height` | `40` | จำนวนแถวของภาพ depth ที่ยุบเป็นสแกน — ตัวที่ตัดสินว่าเห็นของ**เตี้ย**แค่ไหน (nav ใช้ 10) |
-| `trigger_distance` **P** | (profile) | **ปุ่มหลัก** — เจอของใกล้กว่านี้ (m) ถึงจะเบี่ยงซ้าย ดูที่มาของค่าข้างล่าง |
-| `corridor_half_width` **P** | (profile) | ครึ่งความกว้างของกรอบข้างหน้า (m) ตัวรถกว้าง 0.19 |
-| `stop_distance` **P** | (profile) | ใกล้กว่านี้ (m) = เบรก ไม่ต้องหลบแล้ว วัดจาก `base_link` หัวรถล้ำไปอีก ~0.2 `0` = ปิด |
-| `avoid_offset_frac` **P** | (profile) | **เฉพาะถนนไม่มีเส้นกลาง — ถูกข้ามทั้งหมดเมื่อ `blue_is_centre_line=true` และเห็นเส้นน้ำเงิน** ตอนหลบให้รถอยู่ห่างเส้นซ้ายเท่าไร คิดเป็นสัดส่วนของครึ่งคอริดอร์ (`1.0` = กลางถนน, `0` = ทับเส้น) |
-| `pass_distance` **P** | (profile) | **ใช้เฉพาะตอนลิดาร์มองไม่เห็นสิ่งกีดขวางจากด้านข้าง** — ต้องวิ่งต่ออีกเท่านี้ (m) หลังสิ่งกีดขวางหลุดจากกรอบหน้า (คือหลังเทียบข้างแล้ว) ถึงจะกลับเลน = ความยาวสิ่งกีดขวาง + ความยาวรถ **ไม่ต้องแก้เมื่อเปลี่ยน `trigger_distance`** และเป็น**ตัวเดียวที่กันรถไม่ให้ตัดกลับ**เมื่อสิ่งกีดขวางเตี้ยเกินกว่าลิดาร์จะเห็น |
-| `max_avoid_distance` **P** | (profile) | วิ่งเกินนี้ (m) แล้วยังไม่เห็นว่าพ้น ให้ยอมแพ้แล้วกลับเลน |
-| `side_clear_time` **P** | (profile) | เลนที่ออกมาต้องโล่งต่อเนื่องเท่านี้ (s) ถึงจะกลับเลน |
-| `min_clearance` **P** | (profile) | ต้องออกห่างจากเลนเดิมอย่างน้อยเท่านี้ (m) ก่อนถึงจะเริ่มมองหาทางกลับ — กันการกลับเลนทั้งที่ยังไม่ได้ออกไปไหน |
-| `lane_half_width` **P** | (profile) | ครึ่งความกว้าง (m) ของกรอบที่คาไว้บนเลนเดิม กว้างพอจะเจอของที่ขวางการกลับเลน แคบพอจะไม่กินขอบถนนกับกำแพงไกล ๆ |
-
-## หลบสิ่งกีดขวางระหว่างขับตามเลน
-
-`src/obstacle_avoider.py` **ไม่สั่งเลี้ยวเอง** มันอ่านเซนเซอร์ ตัดสินใจ แล้ว publish คำเดียว
-ลง `/lane/avoid` ที่ 10 Hz:
-
-| คำ | แปลว่า |
-|---|---|
-| `follow` | ขับเลนตัวเองตามปกติ (และเป็นค่าที่ตัวขับใช้เมื่อไม่มีใคร publish) |
-| `avoid` | เกาะ**เลนซ้าย** — มีของอยู่ในเลนเรา |
-| `stop` | ใกล้เกินกว่าจะหลบทัน เบรก |
-
-ที่ต้องแยกเป็นสองโหนดแบบนี้เพราะ **`/cmd_vel_twist` ต้องมี publisher เจ้าเดียว** ถ้าตัวหลบ
-ยิง Twist ของตัวเองเข้าไปด้วย มุมเลี้ยวที่ Isaac ได้รับจะเป็นคำสั่งสองชุดสลับกัน ซึ่งเป็น
-อาการเดียวกับตอนเผลอรัน Nav2 พร้อม lane following ผลพลอยได้คือเปิด/ปิดตัวหลบได้ระหว่าง
-ที่ตัวขับยังวิ่งอยู่ เหมือน `yolo_detector.py`
-
-### สองเซนเซอร์ ทางเดินเดียว
-
-`/scan` (lidar ของ Isaac ~4 Hz รอบตัว 360°) กับ `/scan_depth` (จาก `/realsense_depth`
-ผ่าน `depthimage_to_laserscan` ~10 Hz เห็นเฉพาะข้างหน้า) เป็น `sensor_msgs/LaserScan`
-เหมือนกัน `scan_topics` จึงเป็น**ลิสต์** และทุกแหล่งเดินทางเดียวกันหมด สองตัวนี้เสริมกัน
-ไม่ได้ซ้ำกัน: lidar เป็นตัวเดียวที่มองข้างและข้างหลังได้ — ซึ่งคือตัวที่บอกว่า "พ้นแล้ว" —
-ส่วนกล้อง depth รีเฟรชเร็วกว่า 2–3 เท่า และเห็นของที่อยู่ในระดับตัวถังซึ่ง lidar ระนาบเดียว
-อาจพลาด
-
-ทุกอย่างวัดใน `base_link` ไม่ใช่ใน frame ของเซนเซอร์ เพราะ lidar กับกล้อง depth ห่างกัน
-~0.1 ม. ตามแนว x ซึ่งเป็น 8% ของระยะ trigger 1.2 ม. — "ไกลแค่ไหน" จึงมีความหมายก็ต่อเมื่อ
-แปลง TF แล้ว scan เข้ามาใน frame `lidar` กับ `depth_scan_link` ทั้งคู่เป็นลูกแบบ static
-ของ `base_link` และโค้ด lookup ที่เวลา 0 (ล่าสุดเท่าที่มี) จึงไม่พังตอน `/clock` กระโดด
-หลัง replay
-
-### สองกรอบที่ใช้ตัดสินใจ
-
-ทุกการตัดสินใจมาจากการนับจุดใน 2 กล่อง และ**สองกล่องนี้อยู่คนละเฟรมกัน** ซึ่งคือหัวใจ
-ของการออกแบบทั้งหมด:
-
-```
-   ตอนหลบ รถอยู่เลนซ้าย แต่กรอบ BEHIND ยังคาอยู่ที่เลนเดิม
-
-                  ┌─────────────┐   FRONT (เฟรม base_link — หันตามรถ)
-                  │    FRONT    │     |y| <= corridor_half_width
-         ┌────┐   │             │     x  <= trigger_distance
-         │car │   └─────────────┘     มีของในนี้ = เลนที่วิ่งอยู่โดนขวาง
-         └────┘
-    ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌  เส้นน้ำเงินกลางถนน
-        ┌──────────────────────┐     BEHIND (เฟรม "เลนที่ออกมา")
-        │  BEHIND   [ก้อน]     │       |y| <= lane_half_width  (กว้างเท่าเลน)
-        └──────────────────────┘       side_x_min..side_x_max  (วัดจากตัวรถ)
-                                       ว่างครบ side_clear_time = พ้นแล้วจริง
-```
-
-FRONT เป็น**สี่เหลี่ยม ไม่ใช่วงกลมของระยะ** กำแพงที่ 1.2 ม. แต่อยู่เฉียง 60° ไม่ได้ขวางเรา
-
-BEHIND **ผูกกับเลน ไม่ได้ผูกกับรถ** ตอนเริ่มหลบจะจำตำแหน่งกับทิศของรถไว้ใน odom นั่นคือ
-เส้นกลางของเลนที่กำลังจะออกมา จากนั้นกรอบจะเลื่อนไปตามเลนนั้นเคียงข้างรถ **ไม่ว่ารถจะเบี่ยง
-ออกไปไกลแค่ไหน** และกว้างเท่าเลนพอดี ยื่นไป**ข้างหน้า**ด้วย ไม่ใช่แค่เสมอตัว เพื่อให้กลับเลน
-ตอนถนนโล่งจริง ไม่ใช่ตอนกันชนเพิ่งพ้น
-
-**ทำไมต้องผูกกับเลน** เพราะกล่องที่ตรึงไว้ข้างตัวรถจะเอื้อมถึงสิ่งกีดขวางก็ต่อเมื่อบังเอิญหลบ
-ชิดพอเท่านั้น วัดจริงบน fixture: ก้อนกว้าง 0.20 ม. หลบห่าง 0.80 ม. กล่องแบบเก่าบอกว่าโล่ง
-**เร็วไป 1.18 ม.** ทั้งที่ก้อนยังเสมอข้างรถอยู่เต็ม ๆ และแบริเออร์ยาว 3 ม. เร็วไปถึง **2.80 ม.**
-ส่วนกรอบที่นั่งอยู่ในเลนตอบตรงเป๊ะ (+0.00 ถึง +0.02 ม.) ทุกเคส และอีกด้านหนึ่ง: จอดอยู่ข้าง
-ก้อนเฉย ๆ กล่องแบบเก่ามีจุดลิดาร์ตกในกรอบ 351 จุด ทั้งที่ยังไม่ได้แซงอะไรเลย
-
-เคยลองแบบ**ไล่ตามตัวก้อน**ก่อนแล้วและแย่กว่า: จุดยึดที่ re-centre ตามจุดที่เจอจะไต่ไปตาม
-ก้อนยาว ๆ แทนที่จะเกาะอยู่กับที่ — วัดจากสนามจริง จุดยึดวิ่งไป 3.8 ม. ตามสีข้างก้อนขณะที่
-รถขยับแค่ 0.42 ม. แล้วหลุดออกไปนอกก้อน
-
-เรย์หลงตัวเดียวสั่งอะไรไม่ได้ — ต้องมีจุดตกในกรอบครบ `min_hits` (3) ก่อน ของที่ 1.2 ม.
-กินหลายเรย์ทั้งสองเซนเซอร์อยู่แล้ว จุดเดี่ยว ๆ คือ noise
-
-### ออกง่าย กลับยาก
-
-พอ FRONT ติดปุ๊บก็เข้า `avoid` ทันที แต่จะกลับได้ต่อเมื่อ**ครบทั้งสองอย่าง**: BEHIND ว่าง
-ต่อเนื่อง `side_clear_time` **และ** วิ่งไปแล้ว `pass_distance` **นับจากตอนที่สิ่งกีดขวาง
-หลุดออกจากกรอบ FRONT** ไม่ใช่นับจากตอนเริ่มหลบ
-
-ความต่างตรงนี้คือทั้งหมดของพารามิเตอร์ตัวนี้ ถ้านับจากตอนเริ่มหลบ มันจะรวมระยะที่ยังวิ่ง
-**เข้าหา**สิ่งกีดขวางเข้าไปด้วย ซึ่งขึ้นกับว่าบังเอิญเห็นมันไกลแค่ไหน — วัดจริงในแมพนี้: จาก
-gate 3.0 ม. มี 1.3 ม. ที่เป็นแค่การวิ่งเข้าไปหา เหลือ 1.7 ม.ที่แซงจริง เลยต้องจูนใหม่ทุกครั้ง
-ที่เปลี่ยน `trigger_distance` พอนับจากตอนเทียบข้าง ตัวเลขก็หมายความตรงตัว = ความยาว
-สิ่งกีดขวาง + ความยาวรถ และใช้ได้ไม่ว่าจะเข้าหาจากระยะไหน
-
-**ตราบใดที่ FRONT ยังไม่โล่ง จะไม่กลับเลนเด็ดขาด** ไม่ว่ากรอบข้างจะบอกว่าอะไร ส่วน
-`max_avoid_distance` (นับจากตอนเริ่มหลบ) เป็นทางออกสำรองสำหรับของที่ไม่มีวันโล่ง
-
-**และต้อง "ออกไปแล้วจริง" ก่อนถึงจะเริ่มมองหาทางกลับ** (`min_clearance`, 0.40 ม.) กรอบ
-BEHIND จะขึ้นว่าโล่งทันทีที่สิ่งกีดขวางหลุดออกจากกรอบ — และมันหลุดตั้งแต่รถหันพอ ซึ่งเกิดขึ้น
-ได้ทั้งที่รถยังอยู่ในเลนตัวเองและของยังอยู่ตรงหน้า วัดจากสนามจริง: ออกที่ 0.99 ม. กลับเลนอีก
-1.0 ม. ถัดมาโดยไม่เคยข้ามเส้น แล้วทริกเกอร์ใหม่ที่ 0.60 ม. ซ้ำ ๆ
-
-การหลบจึงมี **3 จังหวะ: ออก → ประคองขนาน → กลับ** และ `min_clearance` คือจังหวะกลาง
-
-**แถวของสิ่งกีดขวางคือการหลบครั้งเดียว ไม่ใช่ครั้งละก้อน** ถ้าข้างหน้ายังมีของอยู่ในระยะ
-`trigger_distance` จะไม่กลับเลนเด็ดขาด กลับเข้าไปในช่องว่างแล้วต้องเบี่ยงออกอีกใน 0.6 ม.
-ไม่ใช่การหลบสองครั้ง แต่คือการส่ายไปมา และทำให้รถหันหน้าเข้าหาก้อนถัดไปทุกรอบ —
-วัดจากสนามจริง: กลับเลนที่ 0.51 / 0.54 / 0.53 ม. แล้วทริกเกอร์ใหม่ที่ 0.62 / 0.98 / 0.92 ม.
-สลับกันไปเรื่อย ๆ
-
-**ถ้าลิดาร์เคยจับสิ่งกีดขวางในเลนที่ออกมาได้ ลิดาร์เป็นคนตัดสิน** ไม่ใช่ระยะ กรอบ BEHIND กิน
-ตั้งแต่ **0.30 ม. หลังตัวรถ** (เลยท้ายรถไปแล้ว) ไปจนถึง 1.00 ม. หน้ารถ **ตามแนวเลนเดิม**
-ดังนั้น "ไม่มีอะไรในกรอบต่อเนื่อง `side_clear_time`" = เลนที่จะกลับเข้าไปโล่งจริง **วัดได้ ไม่ใช่เดา**
-— และนี่คือเหตุผลทั้งหมดที่มีลิดาร์อยู่ เพราะเป็นเซนเซอร์เดียวที่มองข้างตัวได้ กล้อง depth
-เห็นแค่ ±33° ของทิศตรงหน้า
-
-**`pass_distance` ไม่กั้นกรณีนี้** เคยกั้น แล้วผลคือมันตัดสินแทนทุกครั้ง — วัดจากสนามจริง
-กลับเลนที่ 0.51 / 0.54 / 0.53 ม. ชนกับพื้น 0.50 ม.พอดี ลิดาร์ด้านข้างจึงไม่ได้ทำอะไรเลย
-ส่วนอันตรายที่พื้นระยะนั้นพยายามกัน (กลับเลนเข้าไปใน**ช่องว่างระหว่างก้อน**) ตอนนี้กันด้วย
-เงื่อนไข "ข้างหน้าต้องโล่งเกิน `trigger_distance`" ซึ่งบรรยายอันตรายนั้นตรง ๆ แทนที่จะประมาณ
-ด้วยตัวเลข
-
-`pass_distance` เหลือหน้าที่เดียว: ใช้เมื่อกรอบข้าง**ไม่เคยจับอะไรได้เลย**ตลอดการหลบ —
-ของที่อยู่ต่ำกว่าระนาบลิดาร์มองจากด้านข้างแล้วเหมือนถนนโล่งเป๊ะ "โล่ง" จึงไม่ใช่หลักฐาน
-เหลือแต่ระยะเท่านั้น
-
-**และระยะนั้นต้องเป็น "เลยจุดที่ของอยู่" ไม่ใช่ "วิ่งมาแล้วกี่เมตร"** ตอนเริ่มหลบเราวัดได้ว่า
-ของอยู่ห่างไปเท่าไร และเลนที่จำไว้มีจุดกำเนิดที่ตัวรถพอดี ระยะนั้นจึงเป็นตำแหน่งของสิ่งกีดขวาง
-บนเลนโดยตรง ส่วนความยาวเส้นทางที่วิ่งมาไม่ได้บอกอะไรเลยว่าของอยู่ไหน — กรอบหน้ากว้างแค่
-0.44 ม. ของจึงหลุดออกจากกรอบตั้งแต่รถเริ่มหัน ทั้งที่ยังอยู่ข้างหน้าไกล วัดบน fixture:
-แบบเก่าให้รถกลับเลนตั้งแต่หลบไปได้ 0.83 ม. โดยของยังอยู่ข้างหน้า 1.55 ม. แล้วทริกเกอร์
-ก้อนเดิมซ้ำอีก 0.4 วินาทีถัดมา
-
-log จะบอกว่าใช้ทางไหน: `watching the lane behind from here` ตอนเริ่มหลบ แล้ว
-`lane behind busy (N pts)` / `lane behind clear` ระหว่างหลบ และจบด้วย
-`lane behind clear for 0.8 s, 0.42 m past` (ลิดาร์ตัดสิน) หรือ
-`never seen abeam, 0.50 m past` (ใช้ระยะ)
-
-odometry เป็นตัวเลือก ถ้า `/odom` ไม่มาเลย ระบบจะข้ามเงื่อนไขระยะ (พร้อม warning) แทนที่
-จะค้างอยู่ใน `avoid` ตลอดกาล และถ้า **scan ทุกตัวเงียบ** มันจะ**ค้างสถานะเดิมไว้** ไม่ใช่
-ตกกลับไป `follow` — lidar หลุดกลางคันต้องไม่ทำให้รถตัดกลับเข้าไปชนของ
-
-### ฝั่งตัวขับ: ทำไมไม่ต้องจับเวลาเลย
-
-โหมดไม่ได้ไปบวก offset หรือสั่งมุมเลี้ยวตายตัว มันแค่เปลี่ยนว่า**เล็งจากเส้นไหน**:
-
-**ถนน 2 เลน มีเส้นน้ำเงินกลาง**
-
-| โหมด | จุดเล็ง | อ่านจากเลนเราตอนนี้ | อ่านจากเลนซ้าย |
-|---|---|---|---|
-| `avoid` | `เส้นน้ำเงิน − ครึ่งเลน` | เส้นอยู่ทางซ้าย → สั่งข้ามเต็มเลน | error = 0 → **นิ่ง** |
-| `follow` | เจอน้ำเงินทางขวา → `+ ครึ่งเลน` | ไม่เข้าเงื่อนไข → จัดกลางเลนปกติ | สั่งข้ามกลับ |
-
-**ถนนเลนเดียว ขอบขาว 2 ข้าง (ไม่มีเส้นกลาง)** — แบบที่แมพ Isaac ตัวนี้เป็นจริง ๆ
-
-| โหมด | จุดเล็ง | ผล |
-|---|---|---|
-| `avoid` | `เส้นซ้าย + avoid_offset_frac × ครึ่งคอริดอร์` | เบี่ยงไปชิดขอบซ้าย **ในคอริดอร์เดิม** แล้วนิ่งตรงนั้น |
-| `follow` | กึ่งกลางระหว่างสองเส้น | กลับมากลางถนน |
-
-ถนนแบบนี้ไม่มี "เลนซ้าย" ให้ข้าม — ข้ามเส้นขาวซ้ายคือตกถนน ที่ว่างสำหรับแซงอยู่**ในคอริดอร์
-เดียวกัน**นี่เอง กฎจึงเปลี่ยนจาก "ข้ามเส้นกลาง" เป็น "ชิดขอบซ้าย" `avoid_offset_frac` คุมว่า
-ชิดแค่ไหน — ดู `/lane/debug_image` ตอนจูน จุดเล็งต้องไม่ทับเส้นซ้าย
-
-เพราะทุกกรณีวัดจาก**เส้นที่กล้องเห็นจริง** ไม่ใช่จากเลนที่รถบังเอิญอยู่ การหลบจึงจบตัวเองตรงที่
-ควรจบและค้างอยู่ตรงนั้น การกลับก็จบเองกลางเลนเรา — ทุกช่วงเป็น closed loop ไม่มีระยะเวลา
-ให้จูน ไม่มีมุมเลี้ยวตายตัวที่ไหนเลย
-
-### ที่มาของ `trigger_distance` 2.5
-
-**นี่คือพารามิเตอร์ที่ตัดสินว่าการหลบเป็นไปได้หรือไม่ และมันถูกกำหนดด้วยเรขาคณิต ไม่ใช่รสนิยม**
-
-รัศมีวงเลี้ยวต่ำสุด `R = L/tan(δ) = 0.258/tan(0.50) = 0.472` ม. เปลี่ยนเลน 0.66 ม. แบบสองส่วนโค้ง
-(ออก แล้วกลับมาขนาน) มีคำตอบตรงตัว: `W = 2R(1−cos θ)`, `s = 2R sin θ`
-
-| มุมที่รถต้องเหวี่ยง | รัศมี | ระยะเดินหน้าที่ต้องใช้ | กล้อง |
-|---|---|---|---|
-| 25° | 3.52 ม. | **2.98 ม.** | ไหว |
-| 30° | 2.46 ม. | **2.46 ม.** | ไหว |
-| 40° | 1.41 ม. | **1.81 ม.** | ก้ำกึ่ง |
-| 50° | 0.92 ม. | **1.42 ม.** | เส้นหลุดเฟรม |
-| 72° | 0.47 ม. | **0.90 ม.** | ล็อกเต็ม เส้นหายไปนานแล้ว |
-
-**กล้อง CSI มองได้ 97.6° คือ ±48.8°** เกิน ~40° ของการเหวี่ยง เส้นกลางเลนก็หลุดออกนอกภาพ
-แล้ว lane follower จะขึ้น `lane lost: no lane` **กลางการแซง**
-
-ตั้ง 1.00 ม. = บังคับให้ลงแถวล่างสุดทุกครั้ง: รถเหวี่ยง 70° เสียเส้น ตั้งลำกลับมาโดยที่ยังอยู่
-เลนเดิม แล้ววิ่งเข้าหาสิ่งกีดขวางใหม่ที่ 0.60 ม. — วนแบบนี้ไปเรื่อย ๆ **ไม่ใช่การหลบสองครั้ง
-แต่คือการวิ่งเข้าชนแบบแบ่งจ่าย**
-
-**2.50 ซื้อแถว 30°** ลดลงมาถึง ~2.0 ยังพอไหวและเฉียดกว่า ต่ำกว่านั้นกล้องประคองเส้นผ่าน
-การเหวี่ยงไม่ได้ ไม่ว่าจะจูนอย่างอื่นดีแค่ไหน — บวกหัวรถที่ล้ำหน้า `base_link` อีก ~0.2 ม. ด้วย
-
-> กฎ "เจอน้ำเงินทางขวา = อยู่เลนสวน" เดิมทำงานเฉพาะตอนเห็นน้ำเงิน**โดด ๆ** ตอนนี้ขยายให้
-> ทำงานทุกครั้งที่เห็นน้ำเงินทางขวา และย้ายไป**เช็กก่อน**กรณีเห็นครบสองข้าง ถ้าไม่ทำแบบนี้
-> ตอนอยู่เลนสวนโค้ดจะเห็นขาวซ้าย+น้ำเงินขวาแล้ว "จัดกลางเลน" อย่างมีความสุขอยู่เลนสวนต่อไป
-> ขับขวาชิดขวา เส้นกลางอยู่ซ้ายเสมอ กฎนี้จึงจริงเสมอบนถนน 2 เลน
-
-### สองระนาบ สองความสูง — ตัวที่ตัดสินว่าเห็นของเตี้ยไหม
-
-วัดจริงบนแมพนี้: กล่องกีดขวางสูง **0.11–0.19 ม.** ซึ่ง**ต่ำกว่าระนาบลิดาร์ที่ 0.194 ม.**
-ลิดาร์ยิงข้ามไปโดนกำแพงหลังกล่อง — สแกนดิบ 1600 เรย์ ไม่มีเรย์เสียแม้แต่อันเดียว
-ระยะใกล้สุดทั้งวง 360° คือ 1.695 ม. ทั้งที่จมูกรถชนกล่องอยู่ (ยืนยันซ้ำ: กล้อง CSI ที่
-z=0.109 ม. ออกภาพดำสนิทเพราะฝังอยู่ในกล่อง ขณะที่ลิดาร์อ่านกำแพงโล่ง 4.83 ม.)
-
-**กล้อง depth ก็ไม่ช่วย ถ้า `scan_height` ยังเป็น 10** เพราะ ±5 แถวรอบแกนกล้องคือระนาบ
-แนวนอนที่ 0.176 ม. สูงกว่ากล่องอีกเหมือนกัน — จะได้เซนเซอร์ตัวที่สองที่เห็นพ้องว่าไม่มีอะไร
-แถวที่อยู่**ต่ำกว่า**แกนกล้องต่างหากที่ก้มลงไปโดน
-
-intrinsics จริงจาก `/realsense_depth_camera_info`: 640×480, **fy = 484.214**, cy = 240
-ที่ `scan_height: 40` (±20 แถว) เรย์ล่างสุดก้มลง `atan(20/484.2)` = 2.37°:
-
-| ระยะ | ความสูงของเรย์ล่างสุด = ของที่เตี้ยที่สุดที่เห็นได้ |
-|---|---|
-| 1.0 ม. | 0.135 ม. |
-| 1.5 ม. | 0.114 ม. |
-| **2.0 ม.** | **0.093 ม.** ← ตรงกับ `trigger_distance` |
-| 2.5 ม. | 0.073 ม. |
-| 3.0 ม. | 0.052 ม. |
-
-(ลิดาร์คือ 0.194 ม. คงที่ทุกระยะ) สังเกตว่า**ยิ่งไกลยิ่งเห็นของเตี้ยกว่า** เพราะเรย์ก้มลงเรื่อย ๆ
-ซึ่งเข้าทางพอดี — เราอยากเจอมันแต่ไกล
-
-พื้นไม่กลายเป็นกำแพงปลอม: เรย์ล่างสุดโดนพื้นที่ `0.176×484.2/20` = **4.26 ม.** ซึ่งเกิน
-`range_max` 3.0 → ถูกทิ้ง วัดจริงยืนยันแล้ว — `/scan_depth` มี return เฉพาะทิศที่มีกำแพงจริง
-(−40°..−10°) และ**ว่างสนิทตรงหน้าบนถนนโล่ง** ปลอดภัยจนถึง `n < 85.2/range_max` = 28 แถว
-(scan_height ~56)
-
-**ช่องโหว่ที่ยังเหลือ:** กรอบ RIGHT ที่ใช้ตอบว่า "พ้นหรือยัง" เป็นงานของลิดาร์ล้วน — กล้อง depth
-มี FOV แค่ ±33° มองข้างตัวไม่ได้เลย ดังนั้นกับของเตี้ยที่ลิดาร์ไม่เห็น กรอบนั้นจะว่างตลอดทาง
-และ `pass_distance` กลายเป็น**ตัวเดียว**ที่กันรถไม่ให้ตัดกลับเข้าไปชน ตั้งไว้ 1.0 ม.
-และต้องตั้งตามความยาวของสิ่งกีดขวาง + ความยาวรถ
-
-### เงียบ ≠ ปลอดภัย
-
-ถ้า**ยังไม่เคย**มี scan เข้ามาเลยสักอัน (topic ผิด, กล้อง depth ไม่มีบน stage, TF ไม่ถึง
-`base_link`) นั่นคือปัญหา **config** ไม่ใช่ dropout — และการ publish `follow` ตอนนั้นแปลว่า
-รถวิ่งเต็มความมั่นใจโดยไม่มีการมองสิ่งกีดขวางเลย ซึ่งดูเหมือนระบบทำงานปกติทุกประการ
-จนกระทั่งเจอของจริง โค้ดจึง publish **`stop`** จนกว่าจะฉาย scan แรกสำเร็จ รถไม่ขยับจนกว่า
-เซนเซอร์จะทำงาน ส่วนกรณีที่เคยมีแล้วหายไป (dropout) ยังคง**ค้างสถานะเดิม**ไว้เหมือนเดิม
-
-อยากขับโดยไม่มองสิ่งกีดขวางจริง ๆ ใช้ `avoid:=false` ไม่ใช่ปล่อยให้มันเงียบ
-
-### ดูว่ามันคิดอะไรอยู่
-
-ครบสี่อย่างในหน้าต่างเดียว — ภาพตัวตรวจจับเลน + ภาพ depth ดิบ + ลิดาร์ (ขาว) + depth scan (ฟ้า):
-
-```bash
-ros2 run rviz2 rviz2 -d $(ros2 pkg prefix qcar2_isaac_nav2)/share/qcar2_isaac_nav2/rviz/qcar2_lane_avoid.rviz
-```
-
-สองสีเป็นเรื่องตั้งใจ: ตรงไหนซ้อนกัน = ของสูงพอที่เซนเซอร์ทั้งคู่เห็น ส่วนตรงไหน
-**ฟ้าล้วน = ของที่ลิดาร์มองไม่เห็น** ซึ่งคือกรณีที่ระบบถอยไปใช้ `pass_distance` แทน
-Fixed Frame เป็น `base_link` เพราะเส้นทางนี้ไม่มีแมพและไม่มี `map -> odom`
-
-**Decision windows** วาดกรอบสองอันที่ใช้ตัดสินใจจริง ๆ ลงบนภาพลิดาร์:
-
-| สี | หมายความว่า |
-|---|---|
-| **เขียว** | กรอบว่าง |
-| **แดง** | มีของอยู่ในกรอบ |
-| **เหลืองอำพัน** | ไม่มีข้อมูล scan เลย |
-
-กรอบหน้าคือ `|y| <= corridor_half_width` ยาวถึง `trigger_distance` กรอบข้างคือกล่อง
-`side_*` — เห็นกล่องแดงตอนรถเทียบข้างสิ่งกีดขวางแล้วเปลี่ยนเป็นเขียวตอนพ้น คือหลักฐานว่า
-ลิดาร์กำลังสแกนด้านข้างอยู่จริง กลุ่มจุดเฉย ๆ บอกไม่ได้ว่าจุดไหนถูกนับ
-
-วาดทุก tick รวมถึงตอนไม่มีข้อมูล (เป็นสีเหลืองอำพัน) เพราะจังหวะที่อยากดูกรอบมากที่สุด
-คือจังหวะที่เซนเซอร์เงียบ
-
-แผง **Depth camera** เป็นภาพ depth ดิบ (32FC1 normalize แล้ว ใกล้=มืด ไกล=สว่าง) ซึ่ง
-`/scan_depth` เป็นแค่แถบเดียวที่ตัดออกมาจากมัน ใช้ดูเวลาฝั่ง depth ไม่เห็นอะไร: ภาพดำสนิท
-= กล้องฝังอยู่ในตัววัตถุ, ภาพว่างเปล่า = render product ไม่ได้เปิด
-
-หรือดูเป็นตัวเลข เบากว่ามาก (RViz กิน GPU ที่ sim ก็แย่งอยู่แล้ว):
-
-```bash
-ros2 topic echo /lane/avoid                 # follow / avoid / stop
-ros2 topic echo /lane/front_distance        # ระยะที่ trigger เอาไปเทียบจริง ๆ (m)
-ros2 topic hz /scan /scan_depth             # ทั้งคู่มาจริงไหม
-ros2 run rqt_image_view rqt_image_view /lane/debug_image   # note บอกโหมดอยู่มุมซ้ายบน
-```
-
-`/lane/front_distance` คือตัวที่แยก "ไม่เคยเห็นเลย" ออกจาก "เห็นแต่สายไป" ได้ ขับเข้าหาสิ่งกีดขวาง
-แล้ว echo ดู จะได้ตั้ง `trigger_distance` จากค่าที่วัดได้ ไม่ใช่จากการเดา
-
-log ของตัวหลบพิมพ์ทุกครั้งที่เปลี่ยนสถานะพร้อมเหตุผล และ**เหตุผลบอกด้วยว่าใช้หลักฐานอะไร**:
-
-| ข้อความ | แปลว่า |
-|---|---|
-| `follow -> avoid (obstacle at 1.03 m)` | เจอของในกรอบหน้า |
-| `watching the lane behind from here` | จำเลนที่ออกมาไว้แล้ว กรอบ BEHIND เริ่มทำงาน |
-| `lane behind busy (24 pts)` / `lane behind clear` | ลิดาร์เห็น/ไม่เห็นของในเลนเดิม |
-| `avoid -> follow (lane behind clear for 0.8 s, 0.62 m past)` | **ลิดาร์เห็นว่าเลนเดิมโล่งแล้วจริง** |
-| `holding out - 0.21 m off the lane, want 0.40` | ยังออกไม่พ้นเลนเดิม ยังไม่พิจารณากลับ |
-| `avoid -> follow (never seen abeam, 0.81 m beyond where it was)` | ลิดาร์ไม่เคยเห็นมันจากด้านข้าง ใช้ระยะเลยจุดที่ของอยู่แทน |
-| `avoid -> follow (gave up after 8.00 m)` | ชน `max_avoid_distance` |
-
-### กับดักที่เจอมาแล้ว
-
-**`angular.z` เป็นบวก = เลี้ยวซ้าย** เลนที่อยู่ทาง**ขวา**ของกลางภาพ (error > 0) จึงต้องได้มุมเลี้ยว
-**ติดลบ** ถ้ากลับเครื่องหมายผิด รถจะวิ่งออกนอกเลนเร็วขึ้นเรื่อย ๆ แทนที่จะเข้าเลน
-
-**watchdog ไม่ publish ซ้ำ** Isaac drive graph จำ Twist ตัวสุดท้ายไว้เอง ถ้า watchdog ส่งคำสั่งเดิมซ้ำ
-`/cmd_vel_twist` จะกลายเป็น 20 Hz และมีคำสั่งเก่าสลับกับคำสั่งใหม่ หน้าที่เดียวของมันคือ
-**สั่งหยุด** เมื่อไม่เจอเลน (หรือกล้องดับ) เกิน `lost_timeout` — เลนหายไป 1–2 เฟรมที่ 10 Hz
-เป็นเรื่องปกติ ไม่ต้องเบรก
-
-**`use_sim_time:=true` + ไม่มี `/clock` = timer ไม่ทำงานเลย** โหนดสตาร์ตปกติ พิมพ์บรรทัด
-แรกออกมา subscribe ครบ แต่ `tick()` ไม่เคยถูกเรียกสักครั้ง ไม่มี error ไม่มี warning —
-เพราะ ROS timer เดินตามนาฬิกาที่ไม่เดิน อาการนี้เจอตอน Isaac Sim หยุดอยู่ (กด Stop หรือ
-ยังไม่กด Play) ถ้าโหนดดูเหมือนไม่ทำอะไรเลย เช็ก `ros2 topic hz /clock` ก่อนไปหาที่อื่น
-
-**สไลเดอร์ไม่มีตัวหนังสือ** opencv ตัวที่ pip ลงไว้ชี้ `QT_QPA_FONTDIR` ไปยังโฟลเดอร์ฟอนต์ที่มันไม่ได้แถมมา
-Qt เลยไม่มีฟอนต์ใช้ ป้ายบนสไลเดอร์เลยว่างเปล่า `_fix_qt_fonts()` ใน `lane_follower.py` ชี้กลับไปที่
-ฟอนต์ของระบบก่อนเปิดหน้าต่าง (Qt อ่านตัวแปรนี้ตอนเปิด GUI ไม่ใช่ตอน `import cv2` จึงยังทัน)
-
-**ไม่ใช้ cv_bridge** เหตุผลเดียวกับ `yolo_detector.py` — segfault เงียบ ๆ ใต้ NumPy ของ Isaac
-decode/encode ภาพทำด้วย NumPy ล้วน ส่วน `cv2` ใช้แค่แปลงสี ทำ mask และวาด ซึ่งไม่ข้ามเส้นนั้น
-
-**ครึ่งความกว้างเลนเรียนรู้ออนไลน์ ต้องรอมันเข้าที่ก่อน** ตอนเปิดโหนดค่าเริ่มต้นคือ
-`lane_half_width_frac * ความกว้างภาพ` (0.30 = 192 px บนภาพ 640) ซึ่งอาจห่างจากของจริงมาก
-EMA จะเข้าที่ภายใน ~20 เฟรมที่เห็นเลนครบสองข้าง (~2 วิ ที่ 10 Hz) **การหลบใช้ค่านี้โดยตรง**
-ถ้าไปเจอสิ่งกีดขวางในวินาทีแรกที่เปิดโหนด จุดเล็งของ `avoid` จะเพี้ยนไปตามส่วน
-ปล่อยรถวิ่งบนถนนที่เห็นเส้นครบสองข้างสักครู่ก่อนค่อยทดสอบการหลบ
-
-**`/scan` ออกแค่ ~4 Hz** `side_clear_time` 0.6 วิ จึงเท่ากับแค่ 2–3 สแกน ตั้งต่ำกว่านี้แล้ว
-scan หลุดครั้งเดียวก็พอทำให้รถตัดกลับเลนทั้งที่ยังไม่พ้น
-
-**สิ่งกีดขวางสีขาวคือกับดักของ lane detector ไม่ใช่ของตัวหลบ** กล่องขาวเข้า mask ของเส้นขาว
-เต็ม ๆ แล้ว `_inner_edges` ไปเจอ**ขอบกล่อง**นึกว่าเป็นเส้นเลน จุดเล็งเลยกระโดดไปข้างกล่อง
-ที่กำลังจะชน — เห็นเป็นอาการ "ล้อหักกะทันหันตอนเกือบชน" วัดจริงบนภาพสังเคราะห์: error
-กระโดดจาก `0.000` เป็น `-0.650` = หักสุดล็อก `max_run_frac` (0.25) ตัดทิ้งทุก run ที่กว้าง
-เกิน 1/4 ของภาพ เพราะเส้นเลนจริงกว้างแค่ ~8% ของภาพ (วัดจากกล้องจริงในแมพนี้: 70, 62, 9 px
-จาก 820) กำแพง กล่อง หรือพื้นที่แสงจ้าจนขาวโพลนจึงถูกตัดออกหมด
-
----
-
-## โครงสร้างไฟล์
-
-```
-src/qcar2_isaac_nav2/
-├── launch/
-│   ├── qcar2_mapping_launch.py            เฟส 1 (lidar)
-│   ├── qcar2_navigation_launch.py         เฟส 2 (lidar)
-│   ├── qcar2_vslam_mapping_launch.py      เฟส 1 (กล้อง) RTAB-Map RGB-D
-│   ├── qcar2_vslam_navigation_launch.py   เฟส 2 (กล้อง) RTAB-Map localization
-│   ├── qcar2_yolo_launch.py               YOLO บนกล้อง CSI 360 องศา
-│   ├── qcar2_lane_follow_launch.py        ขับตามเลน + หลบสิ่งกีดขวาง (จูนสี / ขับ)
-│   ├── depth_scan_launch.py               กล้อง depth -> /scan_depth (ใช้ร่วม 3 เส้นทาง)
-│   ├── qcar2_cartographer_launch.py       (ของเดิม) เปิด cartographer อย่างเดียว
-│   └── qcar2_slam_and_nav_bringup_launch.py  (ของเดิม) SLAM+Nav2 พร้อมกัน ไม่ใช้แมพที่เซฟ
-├── config/
-│   ├── qcar2_mapping.lua                  จูน Cartographer ของเฟส 1
-│   ├── lane_avoid.yaml                    profile ค่าขับ+ค่าหลบของเส้นทางขับตามเลน
-│   ├── qcar2_nav2_amcl.yaml               พารามิเตอร์ Nav2 + AMCL ของเฟส 2
-│   ├── qcar2_nav2_vslam.yaml              พารามิเตอร์ Nav2 ของเส้นทางกล้อง (VoxelLayer, ไม่มี lidar)
-│   ├── qcar2_2d.lua                       (ของเดิม) ใช้กับ cartographer_launch
-│   └── qcar2_slam_and_nav.yaml            (ของเดิม) ใช้กับ bringup_launch
-├── behavior_trees/
-│   ├── navigate_to_pose_ackermann.xml     BT ตัด Spin ออก
-│   └── navigate_through_poses_ackermann.xml   BT ตัด Spin ออก
-├── src/
-│   ├── twist_stamped_to_twist.py          bridge Nav2 -> Isaac Sim
-│   ├── yolo_detector.py                   YOLO บนกล้อง CSI (ไม่ใช้ cv_bridge)
-│   ├── lane_follower.py                   ขับตามเลน + หน้าต่างจูนสี (ไฟล์เดียว 2 โหมด)
-│   └── obstacle_avoider.py                ตัดสินใจว่าจะหลบไหม -> /lane/avoid (ไม่สั่งเลี้ยวเอง)
-├── scripts/
-│   ├── save_map.sh                        เซฟแมพ (lidar)
-│   ├── save_vslam_map.sh                  เซฟแมพ (กล้อง) จาก /map ของ RTAB-Map
-│   ├── isaac_add_depth_camera.py          เพิ่มกล้อง depth + ROS2 graph ใน Isaac Sim
-│   ├── isaac_add_rgbd_camera.py           เพิ่มกล้อง RGB-D registered สำหรับ V-SLAM
-│   ├── isaac_add_csi_cameras.py           สร้าง ROS2 graph ให้กล้อง CSI ครบ 4 ตัว
-│   ├── isaac_camera_streams.py            preset เลือกว่าจะ render กล้องตัวไหน
-│   ├── isaac_apply_and_save.py            รันสคริปต์ 2 ตัวบนแบบ headless แล้วเซฟ stage
-│   └── isaac_sim_control.py               คุม play/stop/reset และวางรถกลับจุดเริ่มผ่านไฟล์คำสั่ง
-├── rviz/
-│   ├── qcar2_mapping.rviz                 RViz เฟส 1 (lidar)
-│   ├── qcar2_nav2.rviz                    RViz เฟส 2 (lidar)
-│   ├── qcar2_vslam.rviz                   RViz เฟส 1 (กล้อง)
-│   ├── qcar2_vslam_nav.rviz               RViz เฟส 2 (กล้อง)
-│   ├── qcar2_yolo.rviz                    RViz mosaic 4 กล้อง + detections
-│   ├── qcar2_lane_avoid.rviz              RViz ขับตามเลน + หลบ (ภาพ + lidar ขาว + depth ฟ้า)
-│   └── qcar2_depth_view.rviz              ดูภาพ depth ดิบ ๆ
-├── maps/                                  แมพที่เซฟไว้ (.yaml/.pgm/.pbstream/.ply)
-├── CMakeLists.txt / package.xml           build + dependencies
-└── rt_models/dummy_model                  (ของเดิม) ไม่ได้ใช้
-```
-
-## แต่ละไฟล์ทำอะไร
-
-| ไฟล์ | หน้าที่ |
-|---|---|
-| `launch/qcar2_mapping_launch.py` | เปิด `cartographer_node` + `cartographer_occupancy_grid_node` + RViz — ตัวสร้าง `/map` และ TF `map -> odom` ระหว่างขับเก็บแมพ |
-| `launch/qcar2_navigation_launch.py` | เปิด `map_server` + `amcl` + Nav2 ครบชุด + bridge + RViz พร้อมยัด path ของแมพและ BT เข้า params ตอนรัน |
-| `launch/qcar2_vslam_mapping_launch.py` | เปิด `rtabmap` โหมด SLAM กินคู่ RGB-D จาก Isaac สร้าง `/map` + cloud 3 มิติ + TF `map -> odom` — และเป็นที่อยู่ของ `GRID_PARAMS`/`SLAM_2D_PARAMS` ที่อีกไฟล์ import ไปใช้ ทั้งสองไฟล์จะได้ไม่หลุดจากกัน |
-| `launch/qcar2_yolo_launch.py` | เปิด `yolo_detector` + RViz mosaic ตรวจ `cameras:=` ตั้งแต่ตอน launch เลยว่าชื่อกล้องถูกไหม จะได้ไม่ไปเงียบ ๆ ตอน subscribe topic ที่ไม่มีอยู่ |
-| `launch/qcar2_vslam_navigation_launch.py` | เปิด `rtabmap` โหมด localization + `map_server` + Nav2 + `point_cloud_xyz` (depth -> PointCloud2 ให้ VoxelLayer) + bridge — remap `/map`, `/cloud_map` ฯลฯ ของ RTAB-Map ไปไว้ใต้ `/rtabmap/` กันชนกับ `map_server` |
-| `config/qcar2_mapping.lua` | ตั้ง `use_odometry = true` ให้ Cartographer กิน `/odom` ของ Isaac ด้วย ลด drift และคุมความถี่การสร้าง node ไม่ให้กิน CPU |
-| `config/qcar2_nav2_amcl.yaml` | ค่าทั้งหมดของเฟส 2 — AMCL, costmap, MPPI controller, SmacPlannerHybrid, footprint, goal tolerance |
-| `config/qcar2_nav2_vslam.yaml` | ก๊อปมาจากไฟล์บน เปลี่ยนเฉพาะครึ่งเซนเซอร์: ตัด `/scan` ทิ้งหมด, obstacle layer เป็น **VoxelLayer** กิน PointCloud2 จาก depth, ระยะ 12 ม. ทุกที่ — จูน planner/controller เมื่อไหร่ต้องแก้ให้ตรงกันทั้งสองไฟล์ |
-| `behavior_trees/*_ackermann.xml` | BT ที่เอา `Spin` ออกแล้วใช้ `BackUp` แทน เพราะรถ Ackermann หมุนอยู่กับที่ไม่ได้ ต้องแก้ **ทั้งสองไฟล์** ไม่งั้น `bt_navigator` activate ไม่ผ่าน |
-| `src/yolo_detector.py` | node เดียวกิน CSI ทุกตัว รัน YOLO ตัวเดียวร่วมกัน (มี lock กันไม่ให้ 4 callback แย่ง CUDA stream เดียวกัน + ทิ้งเฟรมที่ค้างคิวแทนที่จะไล่ทำของเก่า) publish detections/annotated/mosaic |
-| `launch/qcar2_lane_follow_launch.py` | เปิด `lane_follower` โหมดจูนสีหรือโหมดขับ เลือกไฟล์สีให้เอง (`~/.ros` ก่อน แล้วค่อยของในแพ็กเกจ) — `tune:=true` เป็นตัวเดียวที่สลับโหมด ที่เหลือใช้ร่วมกันหมด และ `avoid:=true` (ค่าเริ่มต้น) พ่วง `obstacle_avoider` + `/scan_depth` มาให้ |
-| `launch/depth_scan_launch.py` | `/realsense_depth` -> `/scan_depth` พร้อม static TF `base_link -> depth_scan_link` (frame ของ `depthimage_to_laserscan` ไม่ใช่ optical frame ถ้าใช้ frame กล้องตรง ๆ สิ่งกีดขวางจะถูกหมุน 90° ลงพื้น) ใช้ร่วมกันทั้ง nav lidar / nav กล้อง / lane following ต่างกันแค่ `range_max` |
-| `src/lane_follower.py` | หา error จากกลางเลนด้วย HSV mask แล้วแปลงเป็นมุมเลี้ยวส่ง `/cmd_vel_twist` ตรง ๆ ไม่ผ่าน Nav2 — โหมดจูนสีใช้ `LaneDetector` **ตัวเดียวกัน** กับตอนขับ ค่าที่เห็นในหน้าต่างจึงคือค่าที่รถใช้จริง โหมดจาก `/lane/avoid` เปลี่ยนแค่ว่า "เล็งจากเส้นไหน" ไม่ได้บวก offset หรือสั่งมุมเลี้ยวตายตัว |
-| `src/obstacle_avoider.py` | นับจุดจาก `/scan` + `/scan_depth` (แปลงเข้า `base_link` ด้วย TF) ในกรอบหน้า/กรอบขวา แล้ว publish `follow`/`avoid`/`stop` ลง `/lane/avoid` — **ไม่แตะ `/cmd_vel_twist`** จึงเปิดปิดได้ระหว่างที่ตัวขับวิ่งอยู่ |
-| `config/lane_colors.yaml` | ค่า HSV ตั้งต้น เป็น ROS parameter file ธรรมดา node เลยไม่ต้องอ่าน YAML เอง ของจริงที่จูนแล้วอยู่ `~/.ros/qcar2_lane_colors.yaml` |
-| `src/twist_stamped_to_twist.py` | แปลง `/cmd_vel_nav` (TwistStamped, yaw rate) เป็น `/cmd_vel_twist` (Twist, **มุมเลี้ยว**) ด้วย `δ = atan(ω·L/v)` — สำคัญที่สุดในแพ็กเกจนี้ |
-| `scripts/isaac_add_depth_camera.py` | รันใน Isaac Sim Script Editor — สร้างกล้อง depth ใต้ `realsenseDepth` แล้วต่อ OmniGraph publish `/realsense_depth` + `/realsense_depth_camera_info` (asset เดิมมีแต่ Xform เปล่า ๆ ไม่มีกล้องและไม่มี graph) |
-| `scripts/save_map.sh` | สั่ง `finish_trajectory` + `write_state` (.pbstream) แล้วเรียก `map_saver_cli` เขียน `.yaml`/`.pgm` ลง `maps/` ใน source |
-| `scripts/save_vslam_map.sh` | เรียก `map_saver_cli` บน `/map` ของ RTAB-Map ลง `maps/` ใน source ต้องรันตอน `qcar2_vslam_mapping_launch.py` ยังเปิดอยู่ และ **จงใจไม่เรียก** `/rtabmap/backup` |
-| `scripts/isaac_add_rgbd_camera.py` | รันใน Isaac Sim Script Editor — สร้าง Camera ใต้ `realsenseRGB` แล้วให้ render product เดียวป้อน `/realsense/color/image_raw` + `/realsense/depth/image_raw` + `/realsense/camera_info` depth จึง registered กับสีและ stamp ตรงกัน (idempotent) |
-| `scripts/isaac_camera_streams.py` | preset เปิด/ปิด render product RTX render ทุกเฟรมไม่ว่ามีคน subscribe หรือไม่ ปล่อยไว้ครบ 4 ตัวคู่ RGB-D จะเหลือ 1.6 Hz — ตัวเดียวที่ได้ GPU คืนจริง |
-| `scripts/isaac_add_csi_cameras.py` | รันใน Isaac Sim Script Editor — เปิด `active` ของ graph CSI 3 ตัวที่ asset ปิดไว้ แล้ว normalize topicName/frameSkipCount/enabled ของทั้ง 4 ตัว พร้อมบังคับ auto exposure เปิด เป็น USD attribute ล้วน ๆ ไม่ต้องใช้ omni.graph |
-| `scripts/isaac_apply_and_save.py` | เอาสคริปต์ข้างบนไปรันกับ stage แบบ headless แล้วเซฟ ไม่ต้องเปิด GUI |
-| `rviz/*.rviz` | ตั้ง `/map` เป็น Transient Local ไว้แล้ว ไม่งั้น RViz จะไม่เห็นแมพที่ publish แบบ latched |
-| `maps/qcar2_map.yaml` + `.pgm` | แมพที่ `map_server` โหลดตอนเฟส 2 |
-| `maps/qcar2_map.pbstream` | เซสชันของ Cartographer เอาไว้ต่อแมพเดิมหรือ export ใหม่ |
-| `maps/qcar2_vslam_map.yaml` + `.pgm` | ภาพฉาย 2 มิติของแมพกล้อง ที่ `map_server` โหลดตอนเฟส 2 ของเส้นทางกล้อง |
-| `maps/qcar2_vslam_cloud_cloud.ply` | cloud 3 มิติที่ export ไว้ เปิดดูได้โดยไม่ต้องรัน RTAB-Map (ซึ่งกินแรมหนัก) |
-| `~/.ros/qcar2_vslam.db` | **ไม่ได้อยู่ใน repo** — pose graph + visual words ของ RTAB-Map ลบแล้วเส้นทางกล้องเฟส 2 ใช้ไม่ได้ ต้องขับเก็บใหม่ |
-| `CMakeLists.txt` | install `launch/ config/ rviz/ behavior_trees/ maps/` และสคริปต์ทั้งหมด |
-| `package.xml` | dependencies (nav2, cartographer_ros, rtabmap_slam/util/viz, vision_msgs, teleop_twist_keyboard, rviz2, depthimage_to_laserscan) — ultralytics ไม่ได้อยู่ในนี้เพราะเป็น pip ไม่ใช่ rosdep |
-| `config/lane_avoid.yaml` | profile ตั้งต้นของเส้นทางขับตามเลน — ค่าขับกับค่าหลบอยู่ที่เดียว แยกเป็นหัวข้อ `lane_follower:` กับ `obstacle_avoider:` (ไม่ใช่ `/**:` เพราะ key เจาะจงโหนดจะชนะ `/**:` เสมอ ไม่ว่าลำดับไหน ทำให้ไฟล์สีที่เป็น `/**:` ไม่ถูกทับ) |
-| `rviz/qcar2_lane_avoid.rviz` | Image `/lane/debug_image` + `/scan` (ขาว) + `/scan_depth` (ฟ้า) ในหน้าต่างเดียว Fixed Frame เป็น `base_link` เพราะเส้นทางนี้ไม่มี `map -> odom` — ตั้งเป็น `map` แล้วจอจะค้างรอ transform ที่ไม่มีวันมา |
-| `scripts/isaac_sim_control.py` | paste ลง Script Editor ครั้งเดียว แล้วสั่ง play/stop/reset/วางรถผ่าน `/tmp/qcar2_sim_cmd.json` ได้จากข้างนอก — Isaac ไม่มี rclpy ใน interpreter ของมัน ไฟล์จึงเป็นช่องทางเดียวที่ทั้งสองฝั่งมีแน่ ๆ |
-| `rviz/qcar2_yolo.rviz` | Image display บน `/csi/mosaic` เป็นหลัก ส่วนราย ๆ กล้องปิดไว้ (RViz dock เป็นแท็บ เห็นทีละอัน) |
-
----
-
-## ทำไมค่าถึงตั้งแบบนี้
-
-**`angular.z` ต้องแปลงหน่วยใน bridge** — Nav2 ส่ง `angular.z` เป็น **yaw rate (rad/s)**
-แต่ Isaac Sim อ่านเป็น **มุมเลี้ยวล้อหน้า (rad)** จำกัดที่ ~0.5 rad วัดจริงบนซีนนี้ได้:
-
-| สั่ง `angular.z` | รัศมีที่ได้ | `0.258/tan(สั่ง)` |
-|---|---|---|
-| 0.30 | 0.797 m | 0.834 m |
-| 0.60 | 0.500 m | ชนลิมิตพวงมาลัย |
-| 1.00 | 0.482 m | ชนลิมิตพวงมาลัย |
-
-ถ้าส่งผ่านตรง ๆ รถจะเลี้ยวแรงกว่าที่ Nav2 สั่งหลายเท่า → เลยเส้นทาง → ถูกแก้ → เลยอีกฝั่ง → **วิ่งวน**
-หลังแปลงแล้ว yaw rate ที่ได้จริงคลาดจากที่สั่งไม่เกิน 0.03 rad/s
-
-**ขนาดรถวัดจาก TF จริง ไม่ได้เดา**
-
-```
-base_link -> hub_frontLeft  = ( 0.130,  0.056)
-base_link -> wheel_rearLeft = (-0.128,  0.056)
-=> wheelbase 0.258 m, ตัวถัง ~0.39 x 0.19 m
-=> รัศมีวงเลี้ยวต่ำสุด = 0.258 / tan(0.5) ~= 0.47 m
-```
-
-จึงตั้ง `footprint` เป็น `[[0.21, 0.10], [0.21, -0.10], [-0.19, -0.10], [-0.19, 0.10]]`
-และ `minimum_turning_radius` / `min_turning_r` = `0.5`
-
-**`enable_stamped_cmd_vel: true` ทุกโหนด** — Nav2 1.3.12 บน Jazzy default เป็น `false` (Twist ธรรมดา)
-แต่ bridge รับเป็น TwistStamped สองชนิดบน topic เดียวกันจะไม่ส่งข้อความถึงกันเลย
-Nav2 วางแผนสวยงามแต่รถไม่ขยับ
-
-**`yaw_goal_tolerance: 3.15`** = ไม่สนทิศตอนจอด รถหมุนอยู่กับที่ไม่ได้ ถ้าบังคับมุมมันจะวนรอบเป้าหมายไม่จบ
-ทิศตอนเข้าเป้าให้ SmacPlannerHybrid จัดการ (มันวางแผนถึง goal *pose* อยู่แล้ว)
-
-**`motion_model_for_search: "REEDS_SHEPP"`** ไม่ใช่ `DUBIN` — Dubins เดินหน้าอย่างเดียว
-เป้าหมายอยู่ข้างหลัง 0.8 m จะกลายเป็นวนหลายเมตร และถ้าวงเลี้ยวไม่พอก็หาเส้นทางไม่เจอเลย
-Reeds-Shepp ถอยหลังได้เหมือนรถกลับรถ 3 จังหวะ จึงต้องลด `PreferForwardCritic` เหลือ 1.5
-(ถ้าไว้ 5.0 มันจะบล็อกช่วงถอยจนรถจอดนิ่ง) และใช้ `PathAngleCritic mode: 2`
-กับ `PathAlignCritic use_path_orientations: true` ตามที่ Nav2 แนะนำสำหรับรถถอยหลังได้
-
-**`CostCritic consider_footprint: true`** — ถ้าเป็น `false` MPPI เช็คชนเป็นวงกลมรัศมี inscribed
-= 0.10 m ทั้งที่รถยาว 0.40 m (Nav2 เตือน `Inconsistent configuration in collision checking`)
-ผลคือวางเส้นทางเฉี่ยวกำแพงแล้วค้าง ลด `batch_size` เหลือ 1000 ชดเชย control loop ยังได้ 20 Hz
-
-ผลวัดจริง goal เดียวกัน จุดเริ่มเดียวกัน:
-
-| | ก่อน | หลัง |
-|---|---|---|
-| ระยะที่วิ่ง | 9.07 m | 1.84 m |
-| ระยะเส้นตรง | 1.92 m | 1.92 m |
-| มุมที่หมุนรวม | 297° | 65° |
-| ผล | timeout | SUCCEEDED 13 s |
-
-**`local_costmap` ใช้ frame `odom` และไม่มี `static_layer`** — ถ้าใช้ frame `map` พร้อม static layer
-local costmap จะกระตุกทุกครั้งที่ AMCL แก้ตำแหน่ง
-
-**`inflation_radius: 0.30`** ไม่ใช่ 0.75 — เป่า 0.75 m รอบรถกว้าง 0.19 m ทำให้ประตูทุกบานดูวิ่งผ่านไม่ได้
-
-**ห้ามใส่ list ว่างใน YAML** — `polygons: []` / `observation_sources: []` / `docks: []` ไม่มี type
-ทำให้ `collision_monitor` กับ `docking_server` abort ตอนสตาร์ท
-(`parameter_value_from failed ... No parameter value set`) ต้องใส่ค่าจริงแล้วปิดด้วย `enabled: False` แทน
-
-**path ของแมพถูกยัดใน `qcar2_navigation_launch.py` ไม่ได้ส่งผ่าน `map:=` ของ nav2**
-เพราะ argument นั้นมาเป็น params file อีกไฟล์ที่ scope `/**:` และ ROS 2 ให้ key ชื่อโหนดตรง ๆ
-(`map_server:`) ชนะ wildcard เสมอไม่ว่าไฟล์ไหนมาทีหลัง — `yaml_filename` ว่างของเราจะชนะ
-แล้ว `map_server` ขึ้นมาแบบไม่มีแมพ และต้องแทนที่ใน `OpaqueFunction` ด้วย
-เพราะ `IncludeLaunchDescription` set launch_arguments ใน scope ลูก ทำให้
-`LaunchConfiguration('map')` ที่ประเมินทีหลังอ่านค่าผิด
-
----
-
-## แก้ปัญหา
-
-**รถวิ่งวน** — เช็คก่อนว่ารถไม่ได้จอดค้างในเขต inflation รถที่เคยชนหรือวนเข้ากำแพงจะอยู่ในช่องที่
-costmap ให้ค่า `253` (inscribed = รถเข้าไม่ได้) จากตรงนั้น planner จะออกเส้นทางเพี้ยนเป็นสิบเมตร
-และ MPPI สั่ง ~0 m/s ตลอด ให้ teleop ถอยออกมาที่โล่งก่อนแล้วค่อยสั่ง goal ใหม่
-ถ้าวนทั้ง ๆ ที่อยู่ในที่โล่ง ให้กลับไปตรวจการแปลงมุมเลี้ยวข้างบน
-
-**รถไม่ขยับเลยทั้งที่ Nav2 บอกว่ากำลังวิ่ง** — เช็ค `ros2 topic info -v /cmd_vel_nav`
-ต้องเป็น `TwistStamped` ทั้ง publisher และ subscriber ถ้ามีสองชนิดปนกันคือไม่มีข้อความส่งถึงกัน
-
-**goal fail ทันทีใน ~13 ms** — TF ขาด ลอง `ros2 run tf2_ros tf2_echo map base_link`
-ถ้าขึ้น `not part of the same tree` แปลว่า Cartographer หรือ AMCL ตาย มักเกิดจากกด Stop/Play ใน Isaac Sim
-
-**RViz ไม่เห็นแมพ** — `/map` publish แบบ latched (transient local) ถ้า RViz ตั้ง Durability
-เป็น Volatile จะไม่ได้รับ ไฟล์ `.rviz` ในนี้ตั้งไว้ถูกแล้ว
+> `pkill -f` แมตช์ command line ของ shell ตัวเองด้วย — คำสั่งที่มีทั้ง pattern และ launch string
+> จะฆ่า shell กลางสคริปต์ (exit 144, บรรทัดถัดไปถูกข้ามเงียบ ๆ) แยกคำสั่ง kill กับ relaunch เสมอ
