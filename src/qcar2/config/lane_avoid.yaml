@@ -1,6 +1,6 @@
 # Tuning profile for camera lane following with obstacle avoidance.
 #
-#   ros2 launch qcar2_isaac_nav2 qcar2_lane_follow_launch.py
+#   ros2 launch qcar2 qcar2_lane_follow_launch.py
 #
 # `profile` defaults to this file, so the command above is the whole command.
 # Anything typed on the command line still wins over what is here, so a one-off

@@ -11,19 +11,19 @@
     #    use_depth_scan:=false and skip the preset's second render product.
 
     # 1. Press PLAY, then tune the lane colours against the live camera:
-    ros2 launch qcar2_isaac_nav2 qcar2_lane_follow_launch.py tune:=true
+    ros2 launch qcar2 qcar2_lane_follow_launch.py tune:=true
     #    Sliders: colour 0=white / 1=blue, then H/S/V min-max, plus the ROI top
     #    and the look-ahead band.  's' saves ~/.ros/qcar2_lane_colors.yaml,
     #    'q' quits.  Tune white on a 2-white-line road and blue on a road with
     #    the centre line - both sets live in the same file.
 
     # 2. Drive, avoiding whatever is parked in the lane:
-    ros2 launch qcar2_isaac_nav2 qcar2_lane_follow_launch.py
+    ros2 launch qcar2 qcar2_lane_follow_launch.py
     ros2 run rqt_image_view rqt_image_view /lane/debug_image   # what it sees
     ros2 topic echo /lane/avoid                                # follow/avoid/stop
 
     # 3. Lane following on its own, with nothing watching for obstacles:
-    ros2 launch qcar2_isaac_nav2 qcar2_lane_follow_launch.py avoid:=false
+    ros2 launch qcar2 qcar2_lane_follow_launch.py avoid:=false
 
 OBSTACLE AVOIDANCE lives in a second node, obstacle_avoider.py, which publishes
 one word on /lane/avoid and steers nothing.  The follower stays the only
@@ -116,7 +116,7 @@ def find_profile(pkg_share, name):
 
 
 def launch_setup(context, *args, **kwargs):
-    pkg_share = get_package_share_directory('qcar2_isaac_nav2')
+    pkg_share = get_package_share_directory('qcar2')
 
     colors = LaunchConfiguration('colors').perform(context)
     if not colors:
@@ -148,7 +148,7 @@ def launch_setup(context, *args, **kwargs):
         })
 
     follower = Node(
-        package='qcar2_isaac_nav2',
+        package='qcar2',
         executable='lane_follower.py',
         name='lane_tuner' if tune else 'lane_follower',
         output='screen',
@@ -169,7 +169,7 @@ def launch_setup(context, *args, **kwargs):
     # default - including the ones with no launch argument at all, such as the
     # side window geometry and min_hits.
     avoider = Node(
-        package='qcar2_isaac_nav2',
+        package='qcar2',
         executable='obstacle_avoider.py',
         name='obstacle_avoider',
         output='screen',

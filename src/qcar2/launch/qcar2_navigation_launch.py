@@ -4,11 +4,11 @@ No SLAM here: map_server serves the saved .yaml and AMCL provides map -> odom.
 Isaac Sim still provides odom -> base_link, /scan, /imu and /clock.
 
     # 1. Press PLAY in Isaac Sim first, then:
-    ros2 launch qcar2_isaac_nav2 qcar2_navigation_launch.py
+    ros2 launch qcar2 qcar2_navigation_launch.py
 
     # or with an explicit map:
-    ros2 launch qcar2_isaac_nav2 qcar2_navigation_launch.py \
-        map:=/home/earth157/entech_quanser_ros2_ws/src/qcar2_isaac_nav2/maps/qcar2_map.yaml
+    ros2 launch qcar2 qcar2_navigation_launch.py \
+        map:=/home/earth157/entech_quanser_ros2_ws/src/qcar2/maps/qcar2_map.yaml
 
     # 2. In RViz, click "2D Pose Estimate" on the car's real position (only needed
     #    if it did not start at the mapping origin), then "2D Goal Pose".
@@ -31,7 +31,7 @@ from nav2_common.launch import RewrittenYaml
 
 
 def launch_setup(context, *args, **kwargs):
-    pkg_share = get_package_share_directory('qcar2_isaac_nav2')
+    pkg_share = get_package_share_directory('qcar2')
     nav2_share = get_package_share_directory('nav2_bringup')
 
     bt_dir = os.path.join(pkg_share, 'behavior_trees')
@@ -57,9 +57,9 @@ def launch_setup(context, *args, **kwargs):
         raise RuntimeError(
             f'Map file not found: {map_yaml}\n'
             'Build the map first:\n'
-            '  ros2 launch qcar2_isaac_nav2 qcar2_mapping_launch.py\n'
-            '  ros2 run qcar2_isaac_nav2 save_map.sh qcar2_map\n'
-            '  colcon build --packages-select qcar2_isaac_nav2')
+            '  ros2 launch qcar2 qcar2_mapping_launch.py\n'
+            '  ros2 run qcar2 save_map.sh qcar2_map\n'
+            '  colcon build --packages-select qcar2')
 
     # Inject the two paths that are only known at runtime:
     #   - yaml_filename                   -> map_server
@@ -110,7 +110,7 @@ def launch_setup(context, *args, **kwargs):
     # Nav2 publishes TwistStamped on /cmd_vel_nav (enable_stamped_cmd_vel: true);
     # the Isaac Sim QCar2 drive graph subscribes to plain Twist on /cmd_vel_twist.
     twist_bridge_node = Node(
-        package='qcar2_isaac_nav2',
+        package='qcar2',
         executable='twist_stamped_to_twist.py',
         name='twist_stamped_to_twist',
         output='screen',
@@ -144,7 +144,7 @@ def launch_setup(context, *args, **kwargs):
 
 
 def generate_launch_description():
-    pkg_share = get_package_share_directory('qcar2_isaac_nav2')
+    pkg_share = get_package_share_directory('qcar2')
 
     return LaunchDescription([
         DeclareLaunchArgument(

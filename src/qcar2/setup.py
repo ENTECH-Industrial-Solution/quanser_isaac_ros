@@ -1,6 +1,6 @@
 from setuptools import find_packages, setup
 
-package_name = 'qcar2_isaac_nav2'
+package_name = 'qcar2'
 
 setup(
     name=package_name,

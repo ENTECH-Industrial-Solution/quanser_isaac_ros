@@ -3,7 +3,7 @@
 # These are STARTING POINTS, not measured values - the lighting in the Isaac
 # scene decides the real ones.  Tune them against the live camera with
 #
-#     ros2 launch qcar2_isaac_nav2 qcar2_lane_follow_launch.py tune:=true
+#     ros2 launch qcar2 qcar2_lane_follow_launch.py tune:=true
 #
 # which writes ~/.ros/qcar2_lane_colors.yaml.  The launch file prefers that file
 # when it exists, so tuning does NOT require a colcon build - editing this file

@@ -1,6 +1,6 @@
 from setuptools import find_packages, setup
 
-package_name = 'qbot_platform_isaac_nav2'
+package_name = 'qbot_platform'
 
 setup(
     name=package_name,

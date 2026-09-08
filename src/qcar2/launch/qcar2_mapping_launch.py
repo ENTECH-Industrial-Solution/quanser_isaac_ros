@@ -4,13 +4,13 @@ Drive the QCar2 around in Isaac Sim with teleop while Cartographer builds the ma
 then run scripts/save_map.sh to write maps/<name>.yaml + .pgm.
 
     # 1. Press PLAY in Isaac Sim first, then:
-    ros2 launch qcar2_isaac_nav2 qcar2_mapping_launch.py
+    ros2 launch qcar2 qcar2_mapping_launch.py
 
     # 2. In a second terminal, drive the car:
     ros2 run teleop_twist_keyboard teleop_twist_keyboard /cmd_vel:=/cmd_vel_twist
 
     # 3. When the map looks complete, in a third terminal:
-    ros2 run qcar2_isaac_nav2 save_map.sh qcar2_map
+    ros2 run qcar2 save_map.sh qcar2_map
 """
 
 import os
@@ -25,7 +25,7 @@ from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
-    pkg_share = get_package_share_directory('qcar2_isaac_nav2')
+    pkg_share = get_package_share_directory('qcar2')
 
     use_sim_time = LaunchConfiguration('use_sim_time')
     use_rviz = LaunchConfiguration('use_rviz')
@@ -34,7 +34,7 @@ def generate_launch_description():
     configuration_basename = LaunchConfiguration('configuration_basename')
 
     cartographer_config_dir = PathJoinSubstitution(
-        [FindPackageShare('qcar2_isaac_nav2'), 'config']
+        [FindPackageShare('qcar2'), 'config']
     )
 
     declare_use_sim_time = DeclareLaunchArgument(

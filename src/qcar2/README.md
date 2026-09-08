@@ -1,4 +1,4 @@
-# qcar2_isaac_nav2
+# qcar2
 
 <a id="overview"></a>
 ## 1. ภาพรวม
@@ -40,7 +40,7 @@ Isaac Sim เป็นเจ้าของ `odom -> base_link` เสมอ ต
 ```bash
 cd ~/entech_quanser_ros2_ws
 source /opt/ros/jazzy/setup.bash
-colcon build --packages-select qcar2_isaac_nav2
+colcon build --packages-select qcar2
 source install/setup.bash
 ```
 
@@ -64,7 +64,7 @@ source install/setup.bash
 ## 2. โครงสร้างไฟล์
 
 ```
-src/qcar2_isaac_nav2/
+src/qcar2/
 ├── launch/
 │   ├── qcar2_mapping_launch.py               [1] เก็บแมพด้วย Cartographer
 │   ├── qcar2_navigation_launch.py            [1] map_server + AMCL + Nav2
@@ -146,15 +146,15 @@ src/qcar2_isaac_nav2/
 
 ```bash
 # เฟส 1 — เก็บแมพ (terminal 1)
-ros2 launch qcar2_isaac_nav2 qcar2_mapping_launch.py
+ros2 launch qcar2 qcar2_mapping_launch.py
 # (terminal 2) ขับช้า ๆ — /scan ของ Isaac ออกแค่ ~4 Hz
 ros2 run teleop_twist_keyboard teleop_twist_keyboard \
     --ros-args -p speed:=0.6 -p turn:=0.5 -r /cmd_vel:=/cmd_vel_twist
 # (terminal 3) เซฟแล้ว build ให้ install เห็น
-ros2 run qcar2_isaac_nav2 save_map.sh qcar2_map && colcon build --packages-select qcar2_isaac_nav2
+ros2 run qcar2 save_map.sh qcar2_map && colcon build --packages-select qcar2
 
 # เฟส 2 — นำทาง
-ros2 launch qcar2_isaac_nav2 qcar2_navigation_launch.py    # map:=/abs/path.yaml ได้
+ros2 launch qcar2 qcar2_navigation_launch.py    # map:=/abs/path.yaml ได้
 ```
 
 รอ `Managed nodes are active` **ครบ 2 ตัว** แล้วใน RViz กด 2D Pose Estimate (ถ้ารถไม่ได้อยู่จุดเดิม)
@@ -196,12 +196,12 @@ RTAB-Map ทำ RGB-D SLAM แทน lidar: ดึง feature จากภาพ
 
 ```bash
 # เฟส 1 — เก็บแมพ
-ros2 launch qcar2_isaac_nav2 qcar2_vslam_mapping_launch.py     # ขับช้า ๆ ให้ครบทุกทาง
-ros2 run qcar2_isaac_nav2 save_vslam_map.sh qcar2_vslam_map    # เซฟตอน launch ยังรันอยู่
-colcon build --packages-select qcar2_isaac_nav2                # แล้วค่อย Ctrl-C ปิด db ให้เรียบร้อย
+ros2 launch qcar2 qcar2_vslam_mapping_launch.py     # ขับช้า ๆ ให้ครบทุกทาง
+ros2 run qcar2 save_vslam_map.sh qcar2_vslam_map    # เซฟตอน launch ยังรันอยู่
+colcon build --packages-select qcar2                # แล้วค่อย Ctrl-C ปิด db ให้เรียบร้อย
 
 # เฟส 2 — นำทาง
-ros2 launch qcar2_isaac_nav2 qcar2_vslam_navigation_launch.py
+ros2 launch qcar2 qcar2_vslam_navigation_launch.py
 ```
 
 ได้ **2 ชิ้น ต้องเก็บทั้งคู่**: `~/.ros/qcar2_vslam.db` (pose graph + visual words สำหรับ relocalise)
@@ -245,7 +245,7 @@ csi_front/back/left/right ──> yolo_detector ──> /csi_<pos>/detections  (
 pip install --user --break-system-packages ultralytics   # ครั้งเดียว (weights ลง ~/.cache/qcar2_yolo/)
 # ครั้งเดียว ตอนหยุด sim: paste scripts/isaac_add_csi_cameras.py ลง Script Editor
 QCAR2_CAMERA_PRESET=csi python3 scripts/isaac_camera_streams.py
-ros2 launch qcar2_isaac_nav2 qcar2_yolo_launch.py         # cameras:= model:= confidence:= imgsz:=
+ros2 launch qcar2 qcar2_yolo_launch.py         # cameras:= model:= confidence:= imgsz:=
 ```
 
 **asset มี graph ครบทั้ง 4 ตัวอยู่แล้ว ต่อสายถูกหมด** แค่ 3 ตัวถูกปิดด้วย `active = False`
@@ -295,8 +295,8 @@ prim ที่ปิดจะ "หายไป" ทั้งดุ้น (ลู
 
 ```bash
 QCAR2_CAMERA_PRESET=lane_avoid python3 scripts/isaac_camera_streams.py   # ครั้งเดียว
-ros2 launch qcar2_isaac_nav2 qcar2_lane_follow_launch.py tune:=true      # จูนสี: s=เซฟ q=ออก
-ros2 launch qcar2_isaac_nav2 qcar2_lane_follow_launch.py                 # ขับ
+ros2 launch qcar2 qcar2_lane_follow_launch.py tune:=true      # จูนสี: s=เซฟ q=ออก
+ros2 launch qcar2 qcar2_lane_follow_launch.py                 # ขับ
 ```
 
 **กฎเดียวใช้ได้ทั้งถนน 1 เลน (ขาว 2 ข้าง) และ 2 เลน (น้ำเงินกลาง)** เพราะกฎมองว่า "เส้นที่ใกล้ที่สุด
@@ -397,7 +397,7 @@ ros2 launch qcar2_isaac_nav2 qcar2_lane_follow_launch.py                 # ข�
 **restart ฝั่ง ROS อย่างเดียว** (อย่าแตะ Isaac Sim — มันถือ scene state และเปิดใหม่กินเวลาเป็นนาที):
 
 ```bash
-pkill -f 'ros2 launch qcar2_isaac_nav2'
+pkill -f 'ros2 launch qcar2'
 pgrep -f '/opt/ros/jazzy/lib/nav2' | xargs -r kill -9
 pgrep -f 'cartographer_ros/'       | xargs -r kill -9
 pgrep -f 'rtabmap'                 | xargs -r kill -9

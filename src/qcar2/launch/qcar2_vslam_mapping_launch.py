@@ -8,13 +8,13 @@ planner, so RTAB-Map also projects that voxel map down to a plain occupancy grid
 on /map, which the costmaps consume unchanged.
 
     # 1. Press PLAY in Isaac Sim first, then:
-    ros2 launch qcar2_isaac_nav2 qcar2_vslam_mapping_launch.py
+    ros2 launch qcar2 qcar2_vslam_mapping_launch.py
 
     # 2. Drive the car slowly around the whole area:
     ros2 run teleop_twist_keyboard teleop_twist_keyboard /cmd_vel:=/cmd_vel_twist
 
     # 3. With this still running, save the result:
-    ros2 run qcar2_isaac_nav2 save_vslam_map.sh qcar2_vslam_map
+    ros2 run qcar2 save_vslam_map.sh qcar2_vslam_map
 
 Requires the RGB-D publisher graph on the Isaac side - run
 scripts/isaac_add_rgbd_camera.py once and save the stage. It publishes
@@ -231,7 +231,7 @@ def launch_setup(context, *args, **kwargs):
         condition=IfCondition(LaunchConfiguration('use_rviz')),
         parameters=[{'use_sim_time': use_sim_time}],
         arguments=['-d', os.path.join(
-            get_package_share_directory('qcar2_isaac_nav2'),
+            get_package_share_directory('qcar2'),
             'rviz', 'qcar2_vslam.rviz')],
     )
 

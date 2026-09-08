@@ -17,7 +17,7 @@ def generate_launch_description():
 
     cartographer_config_dir = PathJoinSubstitution(
         [
-            FindPackageShare('qcar2_isaac_nav2'),
+            FindPackageShare('qcar2'),
             'config',
         ]
     )

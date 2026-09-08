@@ -3,13 +3,13 @@
 
 One file, two modes, ONE perception pipeline shared between them:
 
-    ros2 launch qcar2_isaac_nav2 qcar2_lane_follow_launch.py tune:=true
+    ros2 launch qcar2 qcar2_lane_follow_launch.py tune:=true
         Opens an OpenCV window on the live camera with HSV sliders for the
         white edge lines and the blue centre line, drawn on top of exactly
         what the follower sees (ROI, look-ahead band, detected boundaries,
         target point).  Press 's' to save, 'q' to quit.  Publishes nothing.
 
-    ros2 launch qcar2_isaac_nav2 qcar2_lane_follow_launch.py
+    ros2 launch qcar2 qcar2_lane_follow_launch.py
         Same pipeline, no GUI, and the lateral error is turned into a
         steering command on /cmd_vel_twist.
 
@@ -892,8 +892,8 @@ class LaneTuner(Node):
         os.makedirs(os.path.dirname(self.out_path), exist_ok=True)
         with open(self.out_path, 'w') as fh:
             fh.write(
-                '# Lane colours for qcar2_isaac_nav2, written by\n'
-                '#   ros2 launch qcar2_isaac_nav2 qcar2_lane_follow_launch.py tune:=true\n'
+                '# Lane colours for qcar2, written by\n'
+                '#   ros2 launch qcar2 qcar2_lane_follow_launch.py tune:=true\n'
                 '# A ROS 2 parameter file: the follower loads it directly.\n'
                 '# HSV is OpenCV\'s: H 0-179, S 0-255, V 0-255.\n'
                 '/**:\n'

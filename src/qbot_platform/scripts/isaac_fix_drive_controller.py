@@ -8,7 +8,7 @@ applied to a live stage reports success and changes nothing until the reload.
 Paste this one line rather than the whole file, so there is no chance of pasting
 the wrong one:
 
-    exec(open('/home/earth157/entech_quanser_ros2_ws/src/qbot_platform_issac_nav2/scripts/isaac_fix_drive_controller.py').read())
+    exec(open('/home/earth157/entech_quanser_ros2_ws/src/qbot_platform/scripts/isaac_fix_drive_controller.py').read())
 
 Back the stage up first:
 

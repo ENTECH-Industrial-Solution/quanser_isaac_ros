@@ -7,7 +7,7 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_ros.actions import Node
 
 def generate_launch_description():
-    bringup_dir = get_package_share_directory('qcar2_isaac_nav2')
+    bringup_dir = get_package_share_directory('qcar2')
     nav2_dir = get_package_share_directory('nav2_bringup')
 
     # QBot Platform Cartographer launch
@@ -33,7 +33,7 @@ def generate_launch_description():
 
     # TwistStamped → Twist bridge node
     twist_bridge_node = Node(
-        package='qcar2_isaac_nav2',
+        package='qcar2',
         executable='twist_stamped_to_twist.py',
         name='twist_stamped_to_twist',
         output='screen',

@@ -13,7 +13,7 @@ Isaac Sim still owns odom -> base_link and everything below it, and the Nav2 hal
 is the same navigation_launch.py with the same params file as the AMCL route.
 
     # 1. Press PLAY in Isaac Sim, then:
-    ros2 launch qcar2_isaac_nav2 qcar2_vslam_navigation_launch.py
+    ros2 launch qcar2 qcar2_vslam_navigation_launch.py
 
     # 2. Drive a goal:
     ros2 action send_goal /navigate_to_pose nav2_msgs/action/NavigateToPose \
@@ -54,7 +54,7 @@ from qcar2_vslam_mapping_launch import GRID_PARAMS, SLAM_2D_PARAMS  # noqa: E402
 
 
 def launch_setup(context, *args, **kwargs):
-    pkg_share = get_package_share_directory('qcar2_isaac_nav2')
+    pkg_share = get_package_share_directory('qcar2')
     nav2_share = get_package_share_directory('nav2_bringup')
 
     bt_dir = os.path.join(pkg_share, 'behavior_trees')
@@ -76,14 +76,14 @@ def launch_setup(context, *args, **kwargs):
         raise RuntimeError(
             f'Map file not found: {map_yaml}\n'
             'Save it while qcar2_vslam_mapping_launch.py is running:\n'
-            '  ros2 run qcar2_isaac_nav2 save_vslam_map.sh qcar2_vslam_map\n'
-            '  colcon build --packages-select qcar2_isaac_nav2')
+            '  ros2 run qcar2 save_vslam_map.sh qcar2_vslam_map\n'
+            '  colcon build --packages-select qcar2')
 
     if not os.path.isfile(database_path):
         raise RuntimeError(
             f'RTAB-Map database not found: {database_path}\n'
             'Build the map first:\n'
-            '  ros2 launch qcar2_isaac_nav2 qcar2_vslam_mapping_launch.py\n'
+            '  ros2 launch qcar2 qcar2_vslam_mapping_launch.py\n'
             '  (drive the car around, then Ctrl-C to close the database)')
 
     # Both behavior trees must be overridden, same as the AMCL route: `spin` is
@@ -264,7 +264,7 @@ def launch_setup(context, *args, **kwargs):
     # graph subscribes to plain Twist on /cmd_vel_twist, and reads angular.z as
     # a steering angle. See src/twist_stamped_to_twist.py.
     twist_bridge_node = Node(
-        package='qcar2_isaac_nav2',
+        package='qcar2',
         executable='twist_stamped_to_twist.py',
         name='twist_stamped_to_twist',
         output='screen',
@@ -298,7 +298,7 @@ def launch_setup(context, *args, **kwargs):
 
 
 def generate_launch_description():
-    pkg_share = get_package_share_directory('qcar2_isaac_nav2')
+    pkg_share = get_package_share_directory('qcar2')
 
     return LaunchDescription([
         DeclareLaunchArgument(

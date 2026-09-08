@@ -2,14 +2,14 @@
 # Save the map Cartographer has built into maps/<name>.yaml + <name>.pgm
 # (and a .pbstream so the session can be resumed / re-exported later).
 #
-#   ros2 run qcar2_isaac_nav2 save_map.sh [map_name] [output_dir]
+#   ros2 run qcar2 save_map.sh [map_name] [output_dir]
 #
 # Defaults to "qcar2_map" written into the SOURCE maps/ folder so it survives
 # a colcon rebuild. Run this while qcar2_mapping_launch.py is still running.
 set -uo pipefail
 
 MAP_NAME="${1:-qcar2_map}"
-DEFAULT_SRC_DIR="$HOME/entech_quanser_ros2_ws/src/qcar2_isaac_nav2/maps"
+DEFAULT_SRC_DIR="$HOME/entech_quanser_ros2_ws/src/qcar2/maps"
 OUT_DIR="${2:-$DEFAULT_SRC_DIR}"
 
 mkdir -p "$OUT_DIR"
@@ -40,8 +40,8 @@ if [[ -f "$OUT_DIR/$MAP_NAME.yaml" && -f "$OUT_DIR/$MAP_NAME.pgm" ]]; then
   echo "Map saved:"
   ls -la "$OUT_DIR/$MAP_NAME".{yaml,pgm} 2>/dev/null
   echo
-  echo "Next:  colcon build --packages-select qcar2_isaac_nav2"
-  echo "       ros2 launch qcar2_isaac_nav2 qcar2_navigation_launch.py map:=$OUT_DIR/$MAP_NAME.yaml"
+  echo "Next:  colcon build --packages-select qcar2"
+  echo "       ros2 launch qcar2 qcar2_navigation_launch.py map:=$OUT_DIR/$MAP_NAME.yaml"
 else
   echo "ERROR: map was not written. Is /map being published? (ros2 topic hz /map)" >&2
   exit 1

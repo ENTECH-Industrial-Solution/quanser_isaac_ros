@@ -6,7 +6,7 @@
     #      scripts/isaac_camera_streams.py  with QCAR2_CAMERA_PRESET=csi
     #
     # 2. Press PLAY, then:
-    ros2 launch qcar2_isaac_nav2 qcar2_yolo_launch.py
+    ros2 launch qcar2 qcar2_yolo_launch.py
 
     # 3. Watch it work:
     ros2 topic echo /csi_front/detections
@@ -49,7 +49,7 @@ from launch_ros.actions import Node
 
 
 def launch_setup(context, *args, **kwargs):
-    pkg_share = get_package_share_directory('qcar2_isaac_nav2')
+    pkg_share = get_package_share_directory('qcar2')
 
     # A comma-separated string is the only shape that survives the command line
     # cleanly; the node wants a real list.
@@ -68,7 +68,7 @@ def launch_setup(context, *args, **kwargs):
     use_sim_time = LaunchConfiguration('use_sim_time')
 
     yolo_node = Node(
-        package='qcar2_isaac_nav2',
+        package='qcar2',
         executable='yolo_detector.py',
         name='yolo_detector',
         output='screen',

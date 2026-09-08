@@ -9,7 +9,7 @@ Isaac Sim still provides odom -> base_footprint -> base_link, /scan, /imu and
 
     # or with an explicit map:
     ros2 launch qbot_platform_issac_nav2 qbot_platform_navigation_launch.py \
-        map:=/home/earth157/entech_quanser_ros2_ws/src/qbot_platform_issac_nav2/maps/qbot_map.yaml
+        map:=/home/earth157/entech_quanser_ros2_ws/src/qbot_platform/maps/qbot_map.yaml
 
     # 2. In RViz, click "2D Pose Estimate" on the robot's real position (only
     #    needed if it did not start at the mapping origin), then "2D Goal Pose".
@@ -53,7 +53,7 @@ NAVIGATION_START_DELAY_S = 10.0
 
 
 def launch_setup(context, *args, **kwargs):
-    pkg_share = get_package_share_directory('qbot_platform_issac_nav2')
+    pkg_share = get_package_share_directory('qbot_platform')
     nav2_share = get_package_share_directory('nav2_bringup')
 
     # Resolved HERE, in the parent context, on purpose.
