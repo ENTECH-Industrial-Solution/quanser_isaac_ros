@@ -1,0 +1,179 @@
+#usda 1.0
+(
+    customLayerData = {
+        string creator = "URDF USD Converter v0.1.3"
+    }
+    defaultPrim = "QARM"
+    doc = """Generated from Composed Stage of root layer /tmp/tmp9nnub1t1/QARM.usdc
+
+
+Generated from Composed Stage of root layer /tmp/urdf_import_qarm_dv1ub_dr/usdex_qarm/QARM.usdc
+
+
+Generated from Composed Stage of root layer /tmp/urdf_import_qarm_dv1ub_dr/temp_qarm/qarm.usd
+
+
+Generated from Composed Stage of root layer /home/earth157/entech_quanser_ros2_ws/src/qarm/urdf/qarm/payloads/base.usd
+"""
+    kilogramsPerUnit = 1
+    metersPerUnit = 1
+    subLayers = [
+        @./physics.usda@
+    ]
+    upAxis = "Z"
+)
+
+over "QARM"
+{
+    over "Physics"
+    {
+        def MjcActuator "base_joint_actuator"
+        {
+            uniform double mjc:forceRange:max = inf
+            uniform double mjc:forceRange:min = -inf
+            custom rel mjc:target
+            prepend rel mjc:target = </QARM/Physics/base_joint>
+        }
+
+        def MjcActuator "shoulder_joint_actuator"
+        {
+            uniform double mjc:forceRange:max = inf
+            uniform double mjc:forceRange:min = -inf
+            custom rel mjc:target
+            prepend rel mjc:target = </QARM/Physics/shoulder_joint>
+        }
+
+        def MjcActuator "arm_joint_actuator"
+        {
+            uniform double mjc:forceRange:max = inf
+            uniform double mjc:forceRange:min = -inf
+            custom rel mjc:target
+            prepend rel mjc:target = </QARM/Physics/arm_joint>
+        }
+
+        def MjcActuator "wrist_joint_actuator"
+        {
+            uniform double mjc:forceRange:max = inf
+            uniform double mjc:forceRange:min = -inf
+            custom rel mjc:target
+            prepend rel mjc:target = </QARM/Physics/wrist_joint>
+        }
+
+        over "world_base_joint"
+        {
+        }
+
+        over "base_joint" (
+            delete apiSchemas = ["PhysicsDriveAPI:angular", "PhysicsJointStateAPI:angular"]
+        )
+        {
+        }
+
+        over "shoulder_joint" (
+            delete apiSchemas = ["PhysicsDriveAPI:angular", "PhysicsJointStateAPI:angular"]
+        )
+        {
+        }
+
+        over "arm_joint" (
+            delete apiSchemas = ["PhysicsDriveAPI:angular", "PhysicsJointStateAPI:angular"]
+        )
+        {
+        }
+
+        over "wrist_joint" (
+            delete apiSchemas = ["PhysicsDriveAPI:angular", "PhysicsJointStateAPI:angular"]
+        )
+        {
+        }
+    }
+
+    over "Geometry"
+    {
+        over "world"
+        {
+            over "base_link"
+            {
+                over "base_link"
+                {
+                }
+
+                over "YAW"
+                {
+                    over "YAW"
+                    {
+                    }
+
+                    over "BICEP"
+                    {
+                        over "BICEP"
+                        {
+                        }
+
+                        over "FOREARM"
+                        {
+                            over "FOREARM"
+                            {
+                            }
+
+                            over "tn__ENDEFFECTOR_lG"
+                            {
+                                over "tn__ENDEFFECTOR_lG"
+                                {
+                                }
+
+                                over "tn__ENDEFFECTOR_1_iJ"
+                                {
+                                }
+
+                                over "tool_frame"
+                                {
+                                }
+                            }
+
+                            over "FOREARM_1"
+                            {
+                            }
+                        }
+
+                        over "BICEP_1"
+                        {
+                        }
+                    }
+
+                    over "YAW_1"
+                    {
+                    }
+                }
+
+                over "base_link_1"
+                {
+                }
+            }
+        }
+    }
+
+    over "Materials"
+    {
+        over "material_1"
+        {
+        }
+
+        over "material_2"
+        {
+        }
+
+        over "material_3"
+        {
+        }
+
+        over "material_4"
+        {
+        }
+
+        over "material_5"
+        {
+        }
+    }
+}
+

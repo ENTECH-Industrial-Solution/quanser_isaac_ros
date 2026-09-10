@@ -1,0 +1,173 @@
+#usda 1.0
+(
+    customLayerData = {
+        string creator = "URDF USD Converter v0.1.3"
+    }
+    defaultPrim = "QARM"
+    doc = """Generated from Composed Stage of root layer /tmp/tmp9nnub1t1/QARM.usdc
+
+
+Generated from Composed Stage of root layer /tmp/urdf_import_qarm_dv1ub_dr/usdex_qarm/QARM.usdc
+
+
+Generated from Composed Stage of root layer /tmp/urdf_import_qarm_dv1ub_dr/temp_qarm/qarm.usd
+
+
+Generated from Composed Stage of root layer /home/earth157/entech_quanser_ros2_ws/src/qarm/urdf/qarm/payloads/base.usd
+"""
+    kilogramsPerUnit = 1
+    metersPerUnit = 1
+    upAxis = "Z"
+)
+
+over "QARM"
+{
+    over "Geometry"
+    {
+        over "world"
+        {
+            over "base_link" (
+                prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsArticulationRootAPI", "NewtonArticulationRootAPI", "PhysicsMassAPI"]
+            )
+            {
+                bool newton:selfCollisionEnabled = 0
+                point3f physics:centerOfMass = (0.0005292006, -0.000002233074, 0.02678529)
+                float3 physics:diagonalInertia = (0.023741817, 0.025971793, 0.04873002)
+                float physics:mass = 3.8984704
+                quatf physics:principalAxes = (-0.0000014309182, 0.70698917, 0.70722437, 0.0000014285739)
+
+                over "YAW" (
+                    prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+                )
+                {
+                    point3f physics:centerOfMass = (9.374187e-9, -3.4881078e-9, 0.11581398)
+                    float3 physics:diagonalInertia = (0.00045083088, 0.0004789802, 0.0006250675)
+                    float physics:mass = 0.7015185
+                    quatf physics:principalAxes = (-5.752539e-8, 0.7071067, 0.7071068, -3.1665002e-7)
+
+                    over "BICEP" (
+                        prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+                    )
+                    {
+                        point3f physics:centerOfMass = (0.013658427, -0.23477887, -0.000070600196)
+                        float3 physics:diagonalInertia = (0.00027433847, 0.002424439, 0.0024677461)
+                        float physics:mass = 0.70607334
+                        quatf physics:principalAxes = (-0.0053723026, 0.7066871, 0.7074893, 0.004830686)
+
+                        over "FOREARM" (
+                            prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+                        )
+                        {
+                            point3f physics:centerOfMass = (0.037271254, 0.15535721, 0.00027172395)
+                            float3 physics:diagonalInertia = (0.00014542413, 0.0002977777, 0.00034869945)
+                            float physics:mass = 0.4296669
+                            quatf physics:principalAxes = (0.539671, -0.52983534, -0.46758667, -0.45759416)
+
+                            over "tn__ENDEFFECTOR_lG" (
+                                prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+                            )
+                            {
+                                point3f physics:centerOfMass = (-0.00007140137, -0.000040628733, 0.0057237847)
+                                float3 physics:diagonalInertia = (0.0000022276845, 0.0000022695942, 0.0000040061122)
+                                float physics:mass = 0.02533127
+                                quatf physics:principalAxes = (0.0033829345, 0.63436824, 0.7730232, -0.0007925353)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    over "Physics"
+    {
+        def PhysicsRevoluteJoint "base_joint" (
+            prepend apiSchemas = ["PhysicsDriveAPI:angular", "PhysicsJointStateAPI:angular"]
+        )
+        {
+            uniform token physics:axis = "Z"
+            custom rel physics:body0
+            prepend rel physics:body0 = </QARM/Geometry/world/base_link>
+            custom rel physics:body1
+            prepend rel physics:body1 = </QARM/Geometry/world/base_link/YAW>
+            point3f physics:localPos0 = (0, 0, 0)
+            point3f physics:localPos1 = (0, 0, 0)
+            quatf physics:localRot0 = (1, 0, 0, 0)
+            quatf physics:localRot1 = (1, 0, 0, 0)
+            float physics:lowerLimit = -169.99658
+            float physics:upperLimit = 169.99658
+            custom float urdf:limit:effort = 0
+            custom float urdf:limit:velocity = 0
+        }
+
+        def PhysicsRevoluteJoint "shoulder_joint" (
+            prepend apiSchemas = ["PhysicsDriveAPI:angular", "PhysicsJointStateAPI:angular"]
+        )
+        {
+            uniform token physics:axis = "Z"
+            custom rel physics:body0
+            prepend rel physics:body0 = </QARM/Geometry/world/base_link/YAW>
+            custom rel physics:body1
+            prepend rel physics:body1 = </QARM/Geometry/world/base_link/YAW/BICEP>
+            point3f physics:localPos0 = (0, 0, 0.1397714)
+            point3f physics:localPos1 = (0, 0, 0)
+            quatf physics:localRot0 = (-0.70710677, 0.70710677, 0, 0)
+            quatf physics:localRot1 = (1, 0, 0, 0)
+            float physics:lowerLimit = -84.96964
+            float physics:upperLimit = 84.96964
+            custom float urdf:limit:effort = 0
+            custom float urdf:limit:velocity = 0
+        }
+
+        def PhysicsRevoluteJoint "arm_joint" (
+            prepend apiSchemas = ["PhysicsDriveAPI:angular", "PhysicsJointStateAPI:angular"]
+        )
+        {
+            uniform token physics:axis = "Z"
+            custom rel physics:body0
+            prepend rel physics:body0 = </QARM/Geometry/world/base_link/YAW/BICEP>
+            custom rel physics:body1
+            prepend rel physics:body1 = </QARM/Geometry/world/base_link/YAW/BICEP/FOREARM>
+            point3f physics:localPos0 = (0.05, -0.35, 8.271806e-25)
+            point3f physics:localPos1 = (0, 0, 0)
+            quatf physics:localRot0 = (0.75545394, 1.110223e-16, 0, -0.65520173)
+            quatf physics:localRot1 = (1, 0, 0, 0)
+            float physics:lowerLimit = -94.9964
+            float physics:upperLimit = 75.000175
+            custom float urdf:limit:effort = 0
+            custom float urdf:limit:velocity = 0
+        }
+
+        def PhysicsRevoluteJoint "wrist_joint" (
+            prepend apiSchemas = ["PhysicsDriveAPI:angular", "PhysicsJointStateAPI:angular"]
+        )
+        {
+            uniform token physics:axis = "Z"
+            custom rel physics:body0
+            prepend rel physics:body0 = </QARM/Geometry/world/base_link/YAW/BICEP/FOREARM>
+            custom rel physics:body1
+            prepend rel physics:body1 = </QARM/Geometry/world/base_link/YAW/BICEP/FOREARM/tn__ENDEFFECTOR_lG>
+            point3f physics:localPos0 = (0.033661153, 0.23560756, -8.271806e-25)
+            point3f physics:localPos1 = (0, 0, 0)
+            quatf physics:localRot0 = (0.70532787, -0.7053278, 0.0501261, -0.0501261)
+            quatf physics:localRot1 = (1, 0, 0, 0)
+            float physics:lowerLimit = -172.4603
+            float physics:upperLimit = 172.4603
+            custom float urdf:limit:effort = 0
+            custom float urdf:limit:velocity = 0
+        }
+
+        def PhysicsFixedJoint "world_base_joint"
+        {
+            custom rel physics:body0
+            prepend rel physics:body0 = </QARM>
+            custom rel physics:body1
+            prepend rel physics:body1 = </QARM/Geometry/world/base_link>
+            point3f physics:localPos0 = (0, 0, 0)
+            point3f physics:localPos1 = (0, 0, 0)
+            quatf physics:localRot0 = (1, 0, 0, 0)
+            quatf physics:localRot1 = (1, 0, 0, 0)
+        }
+    }
+}
+
