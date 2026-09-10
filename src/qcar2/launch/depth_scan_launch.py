@@ -53,12 +53,14 @@ The Nav2 routes keep 10 because their costmaps want the far, clean reading and
 already have the lidar for what is close.
 """
 
+from ament_index_python import get_package_share_directory
+from launch.conditions import IfCondition
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
-
+import os
 
 def generate_launch_description():
     use_sim_time = LaunchConfiguration('use_sim_time')

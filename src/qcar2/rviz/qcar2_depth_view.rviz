@@ -4,10 +4,12 @@ Panels:
     Name: Displays
     Property Tree Widget:
       Expanded:
+        - /Global Options1
+        - /RGB1
+        - /Depth1
         - /DepthCloud1
-        - /LaserScan (depth)1
       Splitter Ratio: 0.5
-    Tree Height: 398
+    Tree Height: 222
 Visualization Manager:
   Class: ""
   Displays:
@@ -45,8 +47,6 @@ Visualization Manager:
         csi_left:
           Value: true
         csi_right:
-          Value: true
-        depth_scan_link:
           Value: true
         hub_frontLeft:
           Value: true
@@ -86,12 +86,12 @@ Visualization Manager:
               {}
             csi_right:
               {}
-            depth_scan_link:
-              {}
             hub_frontLeft:
-              {}
+              wheel_frontLeft:
+                {}
             hub_frontRight:
-              {}
+              wheel_frontRight:
+                {}
             imu:
               {}
             lidar:
@@ -99,10 +99,6 @@ Visualization Manager:
             realsenseDepth:
               {}
             realsenseRGB:
-              {}
-            wheel_frontLeft:
-              {}
-            wheel_frontRight:
               {}
             wheel_rearLeft:
               {}
@@ -122,7 +118,7 @@ Visualization Manager:
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /realsense_rgb
+        Value: /realsense/color/image_raw
       Value: true
     - Class: rviz_default_plugins/Image
       Enabled: true
@@ -136,7 +132,7 @@ Visualization Manager:
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /realsense_depth
+        Value: /realsense/depth/image_raw
       Value: true
     - Alpha: 1
       Auto Size:
@@ -190,7 +186,7 @@ Visualization Manager:
       Color: 255; 255; 255
       Color Transformer: FlatColor
       Decay Time: 0
-      Enabled: true
+      Enabled: false
       Invert Rainbow: false
       Max Color: 255; 255; 255
       Max Intensity: 4096
@@ -211,7 +207,7 @@ Visualization Manager:
         Value: /scan
       Use Fixed Frame: true
       Use rainbow: true
-      Value: true
+      Value: false
     - Alpha: 1
       Autocompute Intensity Bounds: true
       Autocompute Value Bounds:
@@ -250,7 +246,7 @@ Visualization Manager:
   Global Options:
     Background Color: 48; 48; 48
     Fixed Frame: odom
-    Frame Rate: 30
+    Frame Rate: 60
   Name: root
   Tools:
     - Class: rviz_default_plugins/MoveCamera
@@ -263,16 +259,16 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 32.00672149658203
+      Distance: 16.576879501342773
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
         Swap Stereo Eyes: false
         Value: false
       Focal Point:
-        X: 1.5
-        Y: 0.5
-        Z: 0
+        X: 2.362621307373047
+        Y: 2.916836977005005
+        Z: 1.247942566871643
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
@@ -288,12 +284,12 @@ Window Geometry:
     collapsed: false
   Displays:
     collapsed: false
-  Height: 1131
+  Height: 795
   Hide Left Dock: false
   Hide Right Dock: false
-  QMainWindow State: 000000ff00000000fd0000000100000000000001560000040dfc0200000003fb0000000a00440065007000740068010000003f000000d30000001700fffffffb0000000600520047004201000001180000011a0000001700fffffffb000000100044006900730070006c006100790073010000023800000214000000cc00ffffff000002430000040d00000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
+  QMainWindow State: 000000ff00000000fd000000010000000000000156000002bdfc0200000003fb0000000a00440065007000740068010000003f000000900000001700fffffffb0000000600520047004201000000d5000000bd0000001700fffffffb000000100044006900730070006c006100790073010000019800000164000000cc00ffffff00000243000002bd00000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
   RGB:
     collapsed: false
   Width: 927
-  X: 66
-  Y: 32
+  X: 710
+  Y: 217
